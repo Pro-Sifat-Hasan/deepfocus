@@ -23,6 +23,7 @@ Write-Host ""
 
 # Step 1: Run Flet build
 try {
+    Write-Host "Running: flet build windows" -ForegroundColor Cyan
     $buildResult = & flet build windows 2>&1
     $buildOutput = $buildResult | Out-String
     
@@ -31,13 +32,22 @@ try {
         Write-Host "Build compilation completed!" -ForegroundColor Green
     }
     
-    # Show any errors but continue
+    # Show any errors but continue (install step failures are expected)
     if ($buildOutput -match "error MSB3073") {
-        Write-Host "Warning: Install step failed (this is expected - we'll fix it)" -ForegroundColor Yellow
+        Write-Host "Note: Install step failed (this is okay - we'll copy files manually)" -ForegroundColor Yellow
+    }
+    
+    # Check if build actually succeeded
+    if (-not (Test-Path $ReleaseDir)) {
+        Write-Host "ERROR: Release directory not found. Build may have failed completely." -ForegroundColor Red
+        exit 1
     }
 } catch {
     Write-Host "Error during flet build: $_" -ForegroundColor Red
-    Write-Host "Build output saved for debugging." -ForegroundColor Yellow
+    Write-Host "Please check the error messages above." -ForegroundColor Yellow
+    if (-not (Test-Path $ReleaseDir)) {
+        exit 1
+    }
 }
 
 Write-Host ""
@@ -98,52 +108,61 @@ if ($missingFiles.Count -gt 0) {
 
 Write-Host "  All required files found" -ForegroundColor Green
 
-# Check if Python runtime files exist and copy if missing
+# Step 3b: Copy Python runtime from serious_python (if CopyPythonDLLs target didn't run)
 $pythonDlls = Get-ChildItem "$ReleaseDir\DLLs" -Filter "python*.dll" -ErrorAction SilentlyContinue
 if ($pythonDlls.Count -eq 0) {
-    Write-Host "  Warning: Python DLLs not found - checking embedded Python..." -ForegroundColor Yellow
+    Write-Host "  Python DLLs not found in Release/DLLs - copying from serious_python..." -ForegroundColor Yellow
     
-    # Ensure DLLs directory exists
+    # Ensure DLLs and Lib directories exist
     if (-not (Test-Path "$ReleaseDir\DLLs")) {
         New-Item -ItemType Directory -Path "$ReleaseDir\DLLs" -Force | Out-Null
     }
-    
-    $foundDlls = @()
-    
-    # Check serious_python build output for Python DLLs
-    $seriousPythonDir = "build\flutter\build\windows\x64\plugins\serious_python_windows"
-    if (Test-Path $seriousPythonDir) {
-        $pythonDllsFromSerious = Get-ChildItem $seriousPythonDir -Recurse -Filter "python*.dll" -ErrorAction SilentlyContinue
-        if ($pythonDllsFromSerious) {
-            Write-Host "  Found Python DLLs in serious_python build, copying..." -ForegroundColor Cyan
-            foreach ($dll in $pythonDllsFromSerious) {
-                Copy-Item -Path $dll.FullName -Destination "$ReleaseDir\DLLs\" -Force
-                $foundDlls += $dll.Name
-            }
-        }
+    if (-not (Test-Path "$ReleaseDir\Lib")) {
+        New-Item -ItemType Directory -Path "$ReleaseDir\Lib" -Force | Out-Null
     }
     
-    # Check site-packages for embedded Python
-    $embeddedPython = Get-ChildItem "$ReleaseDir\site-packages" -Recurse -Filter "python*.dll" -ErrorAction SilentlyContinue
-    if ($embeddedPython) {
-        Write-Host "  Found Python DLLs in site-packages, copying..." -ForegroundColor Cyan
-        foreach ($dll in $embeddedPython) {
-            $dest = Join-Path "$ReleaseDir\DLLs" $dll.Name
-            if (-not (Test-Path $dest)) {
-                Copy-Item -Path $dll.FullName -Destination "$ReleaseDir\DLLs\" -Force
-                $foundDlls += $dll.Name
+    # Find serious_python's extracted Python package
+    $seriousPythonBuildDir = "build\flutter\build\windows\x64\plugins\serious_python_windows"
+    $pythonPackageDir = Join-Path $seriousPythonBuildDir "python"
+    
+    if (Test-Path $pythonPackageDir) {
+        Write-Host "  Found Python package in serious_python build directory" -ForegroundColor Cyan
+        
+        # Copy Python DLLs
+        $pythonDllsSrc = Join-Path $pythonPackageDir "python312.dll"
+        $python3DllSrc = Join-Path $pythonPackageDir "python3.dll"
+        
+        if (Test-Path $pythonDllsSrc) {
+            Copy-Item -Path $pythonDllsSrc -Destination "$ReleaseDir\DLLs\" -Force
+            Write-Host "    Copied python312.dll" -ForegroundColor Green
+        }
+        if (Test-Path $python3DllSrc) {
+            Copy-Item -Path $python3DllSrc -Destination "$ReleaseDir\DLLs\" -Force
+            Write-Host "    Copied python3.dll" -ForegroundColor Green
+        }
+        
+        # Copy DLLs directory contents
+        $pythonDllsDir = Join-Path $pythonPackageDir "DLLs"
+        if (Test-Path $pythonDllsDir) {
+            Copy-Item -Path "$pythonDllsDir\*" -Destination "$ReleaseDir\DLLs\" -Recurse -Force
+            Write-Host "    Copied Python DLLs directory" -ForegroundColor Green
+        }
+        
+        # Copy Lib directory (Python standard library)
+        $pythonLibDir = Join-Path $pythonPackageDir "Lib"
+        if (Test-Path $pythonLibDir) {
+            if (-not (Test-Path "$ReleaseDir\Lib")) {
+                Copy-Item -Path $pythonLibDir -Destination "$ReleaseDir\Lib" -Recurse -Force
+                Write-Host "    Copied Python Lib directory" -ForegroundColor Green
             }
         }
-    }
-    
-    if ($foundDlls.Count -gt 0) {
-        Write-Host "  Copied $($foundDlls.Count) Python DLL(s): $($foundDlls -join ', ')" -ForegroundColor Green
     } else {
-        Write-Host "  Warning: Python DLLs not found automatically" -ForegroundColor Yellow
-        Write-Host "  serious_python should embed Python runtime during build" -ForegroundColor Yellow
+        Write-Host "  Warning: Python package directory not found" -ForegroundColor Yellow
+        Write-Host "  Location checked: $pythonPackageDir" -ForegroundColor Gray
+        Write-Host "  serious_python should download Python during build" -ForegroundColor Yellow
     }
 } else {
-    Write-Host "  Python DLLs found: $($pythonDlls.Count) file(s)" -ForegroundColor Green
+    Write-Host "  Python DLLs already present: $($pythonDlls.Count) file(s)" -ForegroundColor Green
 }
 
 Write-Host ""
