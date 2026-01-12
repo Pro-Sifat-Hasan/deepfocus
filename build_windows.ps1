@@ -565,12 +565,10 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Extract embedded archive
-$base64Archive = @"
+$base64Archive = "REPLACE_WITH_BASE64_DATA"
 '@
-    
-    $installerScriptFooter = @'
-"@
 
+    $installerScriptFooter = @'
 $tempArchive = Join-Path $env:TEMP "DeepFocus_$([Guid]::NewGuid().ToString().Substring(0,8)).zip"
 $archiveBytes = [Convert]::FromBase64String($base64Archive)
 [System.IO.File]::WriteAllBytes($tempArchive, $archiveBytes)
@@ -635,8 +633,8 @@ Write-Host ""
 Read-Host "Press Enter to exit"
 '@
     
-    # Combine header + Base64 archive + footer
-    $installerScript = $installerScriptHeader + "`r`n" + $archiveBase64 + "`r`n" + $installerScriptFooter
+    # Replace placeholder with actual Base64 data and combine
+    $installerScript = $installerScriptHeader.Replace("REPLACE_WITH_BASE64_DATA", $archiveBase64) + $installerScriptFooter
 
     # Save installer script
     $installerPath = "dist\DeepFocus_Installer.ps1"
