@@ -134,15 +134,39 @@ if ($pythonDlls.Count -eq 0) {
         "$env:USERPROFILE\.flet\flutter\build\windows\x64\plugins\serious_python_windows\python"
     )
     
-    # Also check Release directory itself (sometimes DLLs are copied there directly)
-    $releasePythonDlls = Get-ChildItem "$ReleaseDir" -Filter "python*.dll" -ErrorAction SilentlyContinue
+    # Also check Release directory itself recursively (sometimes DLLs are copied there directly)
+    $releasePythonDlls = Get-ChildItem "$ReleaseDir" -Recurse -Filter "python*.dll" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "^python(312|3)\.dll$" }
     if ($releasePythonDlls.Count -gt 0) {
-        Write-Host "  Found Python DLLs in Release directory - moving to DLLs folder..." -ForegroundColor Cyan
+        Write-Host "  Found Python DLLs in Release directory - copying to DLLs folder..." -ForegroundColor Cyan
         foreach ($dll in $releasePythonDlls) {
-            Move-Item -Path $dll.FullName -Destination "$ReleaseDir\DLLs\" -Force
-            Write-Host "    Moved $($dll.Name) to DLLs folder" -ForegroundColor Green
+            $destPath = Join-Path "$ReleaseDir\DLLs" $dll.Name
+            if (-not (Test-Path $destPath)) {
+                Copy-Item -Path $dll.FullName -Destination "$ReleaseDir\DLLs\" -Force
+                Write-Host "    Copied $($dll.Name) from $($dll.DirectoryName)" -ForegroundColor Green
+                $pythonFound = $true
+            }
         }
-        $pythonFound = $true
+    }
+    
+    # Also search in the entire build directory for python312.dll
+    if (-not (Test-Path "$ReleaseDir\DLLs\python312.dll")) {
+        Write-Host "  Searching build directory for python312.dll..." -ForegroundColor Yellow
+        $buildPython312 = Get-ChildItem -Path "build\flutter\build\windows\x64" -Recurse -Filter "python312.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($buildPython312) {
+            Copy-Item -Path $buildPython312.FullName -Destination "$ReleaseDir\DLLs\" -Force
+            Write-Host "    Found and copied python312.dll from: $($buildPython312.DirectoryName)" -ForegroundColor Green
+            $pythonFound = $true
+        }
+        
+        # Also search for python3.dll if python312.dll not found
+        if (-not (Test-Path "$ReleaseDir\DLLs\python3.dll")) {
+            $buildPython3 = Get-ChildItem -Path "build\flutter\build\windows\x64" -Recurse -Filter "python3.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($buildPython3) {
+                Copy-Item -Path $buildPython3.FullName -Destination "$ReleaseDir\DLLs\" -Force
+                Write-Host "    Found and copied python3.dll from: $($buildPython3.DirectoryName)" -ForegroundColor Green
+                $pythonFound = $true
+            }
+        }
     }
     
     # Search in serious_python directories
@@ -286,15 +310,35 @@ if ($pythonDlls.Count -eq 0) {
     
     # Final verification: Check if python312.dll is present
     $python312Final = Test-Path "$ReleaseDir\DLLs\python312.dll"
-    $python3Final = Test-Path "$ReleaseDir\DLLs\python3.dll"
+    
+    # If still not found, do a comprehensive search in the entire build directory
+    if (-not $python312Final) {
+        Write-Host "  python312.dll still not found - performing comprehensive search..." -ForegroundColor Yellow
+        
+        # Search the entire build directory recursively
+        $allPython312 = Get-ChildItem -Path "build" -Recurse -Filter "python312.dll" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch "\\Debug\\" }
+        
+        if ($allPython312.Count -gt 0) {
+            # Prefer Release version, otherwise take the first one
+            $selectedDll = $allPython312 | Where-Object { $_.FullName -match "\\Release\\" } | Select-Object -First 1
+            if (-not $selectedDll) {
+                $selectedDll = $allPython312 | Select-Object -First 1
+            }
+            
+            Write-Host "    Found python312.dll at: $($selectedDll.FullName)" -ForegroundColor Cyan
+            Copy-Item -Path $selectedDll.FullName -Destination "$ReleaseDir\DLLs\" -Force
+            $python312Final = $true
+            Write-Host "    Copied python312.dll to Release/DLLs" -ForegroundColor Green
+        }
+    }
     
     if (-not $python312Final) {
-        Write-Host "  ERROR: python312.dll was not found!" -ForegroundColor Red
+        Write-Host "  ERROR: python312.dll was not found anywhere in the build directory!" -ForegroundColor Red
         Write-Host "  The application will NOT work without python312.dll" -ForegroundColor Red
         Write-Host "  Please ensure Python 3.12 is installed or serious_python downloads it during build" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "  You can manually copy python312.dll:" -ForegroundColor Yellow
-        Write-Host "    1. Find python312.dll in your Python 3.12 installation" -ForegroundColor White
+        Write-Host "    1. Find python312.dll in your Python 3.12 installation or build directory" -ForegroundColor White
         Write-Host "    2. Copy it to: $ReleaseDir\DLLs\" -ForegroundColor White
         exit 1
     } else {
@@ -322,6 +366,26 @@ New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 # Copy entire Release directory
 Write-Host "  Copying all files to distribution folder..." -ForegroundColor Cyan
 Copy-Item -Path "$ReleaseDir\*" -Destination $OutputDir -Recurse -Force
+
+# Final verification: Ensure python312.dll is in distribution
+if (-not (Test-Path "$OutputDir\DLLs\python312.dll")) {
+    Write-Host "  WARNING: python312.dll not found in distribution!" -ForegroundColor Yellow
+    Write-Host "  Attempting to copy from Release directory..." -ForegroundColor Yellow
+    
+    # Try to copy from Release if it exists there
+    if (Test-Path "$ReleaseDir\DLLs\python312.dll") {
+        if (-not (Test-Path "$OutputDir\DLLs")) {
+            New-Item -ItemType Directory -Path "$OutputDir\DLLs" -Force | Out-Null
+        }
+        Copy-Item -Path "$ReleaseDir\DLLs\python312.dll" -Destination "$OutputDir\DLLs\" -Force
+        Write-Host "    Copied python312.dll to distribution" -ForegroundColor Green
+    } else {
+        Write-Host "  ERROR: python312.dll is still missing!" -ForegroundColor Red
+        Write-Host "  The application will not work correctly." -ForegroundColor Red
+    }
+} else {
+    Write-Host "  Verified: python312.dll is present in distribution" -ForegroundColor Green
+}
 
 Write-Host "  Distribution package created at: $OutputDir" -ForegroundColor Green
 
