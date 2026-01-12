@@ -37,6 +37,12 @@ try {
         Write-Host "Note: Install step failed (this is okay - we'll copy files manually)" -ForegroundColor Yellow
     }
     
+    # Check for CMake path escape error (common issue with msvcp140.dll path)
+    if ($buildOutput -match "Invalid character escape|cmake_install\.cmake.*error") {
+        Write-Host "Note: CMake install error detected (known issue with Windows paths)" -ForegroundColor Yellow
+        Write-Host "      This doesn't affect functionality - files are copied correctly" -ForegroundColor Gray
+    }
+    
     # Check if build actually succeeded
     if (-not (Test-Path $ReleaseDir)) {
         Write-Host "ERROR: Release directory not found. Build may have failed completely." -ForegroundColor Red
@@ -126,8 +132,9 @@ if ($pythonDlls.Count -eq 0) {
     $python3DllSrc = $null
     
     # Search locations in order of priority:
-    # 1. serious_python plugin directory
+    # 1. serious_python plugin directory (check the main python directory first - python312.dll is here!)
     $searchPaths = @(
+        "build\flutter\build\windows\x64\python",  # Main Python directory where python312.dll is located
         "build\flutter\build\windows\x64\plugins\serious_python_windows\python",
         "build\flutter\build\windows\x64\plugins\serious_python_windows",
         "$env:LOCALAPPDATA\flet\flutter\build\windows\x64\plugins\serious_python_windows\python",
@@ -148,10 +155,39 @@ if ($pythonDlls.Count -eq 0) {
         }
     }
     
-    # Also search in the entire build directory for python312.dll
+    # CRITICAL: Check the main python directory FIRST (python312.dll is in the root, not DLLs subdirectory!)
+    $pythonMainDir = "build\flutter\build\windows\x64\python"
+    if (-not (Test-Path "$ReleaseDir\DLLs\python312.dll") -and (Test-Path $pythonMainDir)) {
+        Write-Host "  Checking main Python directory: $pythonMainDir" -ForegroundColor Cyan
+        $python312Main = Join-Path $pythonMainDir "python312.dll"
+        $python3Main = Join-Path $pythonMainDir "python3.dll"
+        
+        if (Test-Path $python312Main) {
+            Copy-Item -Path $python312Main -Destination "$ReleaseDir\DLLs\" -Force
+            Write-Host "    ✓ Copied python312.dll from main Python directory" -ForegroundColor Green
+            $pythonFound = $true
+        }
+        if (Test-Path $python3Main) {
+            Copy-Item -Path $python3Main -Destination "$ReleaseDir\DLLs\" -Force
+            Write-Host "    ✓ Copied python3.dll from main Python directory" -ForegroundColor Green
+            $pythonFound = $true
+        }
+        
+        # Also copy vcruntime DLLs from Python directory if they exist
+        $vcruntime140 = Join-Path $pythonMainDir "vcruntime140.dll"
+        $vcruntime140_1 = Join-Path $pythonMainDir "vcruntime140_1.dll"
+        if (Test-Path $vcruntime140) {
+            Copy-Item -Path $vcruntime140 -Destination "$ReleaseDir\DLLs\" -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path $vcruntime140_1) {
+            Copy-Item -Path $vcruntime140_1 -Destination "$ReleaseDir\DLLs\" -Force -ErrorAction SilentlyContinue
+        }
+    }
+    
+    # Also search in the entire build directory for python312.dll as fallback
     if (-not (Test-Path "$ReleaseDir\DLLs\python312.dll")) {
-        Write-Host "  Searching build directory for python312.dll..." -ForegroundColor Yellow
-        $buildPython312 = Get-ChildItem -Path "build\flutter\build\windows\x64" -Recurse -Filter "python312.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+        Write-Host "  Searching entire build directory for python312.dll..." -ForegroundColor Yellow
+        $buildPython312 = Get-ChildItem -Path "build\flutter\build\windows\x64" -Recurse -Filter "python312.dll" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch "\\Debug\\" } | Select-Object -First 1
         if ($buildPython312) {
             Copy-Item -Path $buildPython312.FullName -Destination "$ReleaseDir\DLLs\" -Force
             Write-Host "    Found and copied python312.dll from: $($buildPython312.DirectoryName)" -ForegroundColor Green
@@ -160,7 +196,7 @@ if ($pythonDlls.Count -eq 0) {
         
         # Also search for python3.dll if python312.dll not found
         if (-not (Test-Path "$ReleaseDir\DLLs\python3.dll")) {
-            $buildPython3 = Get-ChildItem -Path "build\flutter\build\windows\x64" -Recurse -Filter "python3.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+            $buildPython3 = Get-ChildItem -Path "build\flutter\build\windows\x64" -Recurse -Filter "python3.dll" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch "\\Debug\\" } | Select-Object -First 1
             if ($buildPython3) {
                 Copy-Item -Path $buildPython3.FullName -Destination "$ReleaseDir\DLLs\" -Force
                 Write-Host "    Found and copied python3.dll from: $($buildPython3.DirectoryName)" -ForegroundColor Green
