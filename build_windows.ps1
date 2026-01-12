@@ -114,9 +114,53 @@ if ($missingFiles.Count -gt 0) {
 
 Write-Host "  All required files found" -ForegroundColor Green
 
-# Step 3b: Copy Python runtime from serious_python (if CopyPythonDLLs target didn't run)
+# Step 3b: Copy Python runtime from serious_python
+# CRITICAL: python312.dll is in the ROOT of python directory, not in python/DLLs!
+# CopyPythonDLLs step copies from python/DLLs, so it might miss python312.dll
+Write-Host "  Ensuring Python DLLs are present..." -ForegroundColor Yellow
+
+# Ensure DLLs directory exists
+if (-not (Test-Path "$ReleaseDir\DLLs")) {
+    New-Item -ItemType Directory -Path "$ReleaseDir\DLLs" -Force | Out-Null
+}
+
+# ALWAYS check main Python directory FIRST (python312.dll is here!)
+$pythonMainDir = "build\flutter\build\windows\x64\python"
+$python312Copied = $false
+
+if (Test-Path $pythonMainDir) {
+    Write-Host "  Checking main Python directory: $pythonMainDir" -ForegroundColor Cyan
+    $python312Main = Join-Path $pythonMainDir "python312.dll"
+    $python3Main = Join-Path $pythonMainDir "python3.dll"
+    
+    if (Test-Path $python312Main) {
+        Copy-Item -Path $python312Main -Destination "$ReleaseDir\DLLs\" -Force
+        Write-Host "    ✓ Copied python312.dll from main Python directory" -ForegroundColor Green
+        $python312Copied = $true
+    }
+    if (Test-Path $python3Main -and -not (Test-Path "$ReleaseDir\DLLs\python3.dll")) {
+        Copy-Item -Path $python3Main -Destination "$ReleaseDir\DLLs\" -Force
+        Write-Host "    ✓ Copied python3.dll from main Python directory" -ForegroundColor Green
+    }
+    
+    # Also copy vcruntime DLLs if they exist (needed for Python)
+    $vcruntime140 = Join-Path $pythonMainDir "vcruntime140.dll"
+    $vcruntime140_1 = Join-Path $pythonMainDir "vcruntime140_1.dll"
+    if (Test-Path $vcruntime140 -and -not (Test-Path "$ReleaseDir\DLLs\vcruntime140.dll")) {
+        Copy-Item -Path $vcruntime140 -Destination "$ReleaseDir\DLLs\" -Force -ErrorAction SilentlyContinue
+        Write-Host "    ✓ Copied vcruntime140.dll" -ForegroundColor Green
+    }
+    if (Test-Path $vcruntime140_1 -and -not (Test-Path "$ReleaseDir\DLLs\vcruntime140_1.dll")) {
+        Copy-Item -Path $vcruntime140_1 -Destination "$ReleaseDir\DLLs\" -Force -ErrorAction SilentlyContinue
+        Write-Host "    ✓ Copied vcruntime140_1.dll" -ForegroundColor Green
+    }
+}
+
+# Check what we have now
 $pythonDlls = Get-ChildItem "$ReleaseDir\DLLs" -Filter "python*.dll" -ErrorAction SilentlyContinue
-if ($pythonDlls.Count -eq 0) {
+
+# Only search if python312.dll is still missing
+if (-not (Test-Path "$ReleaseDir\DLLs\python312.dll")) {
     Write-Host "  Python DLLs not found in Release/DLLs - searching for Python runtime..." -ForegroundColor Yellow
     
     # Ensure DLLs and Lib directories exist
@@ -155,34 +199,6 @@ if ($pythonDlls.Count -eq 0) {
         }
     }
     
-    # CRITICAL: Check the main python directory FIRST (python312.dll is in the root, not DLLs subdirectory!)
-    $pythonMainDir = "build\flutter\build\windows\x64\python"
-    if (-not (Test-Path "$ReleaseDir\DLLs\python312.dll") -and (Test-Path $pythonMainDir)) {
-        Write-Host "  Checking main Python directory: $pythonMainDir" -ForegroundColor Cyan
-        $python312Main = Join-Path $pythonMainDir "python312.dll"
-        $python3Main = Join-Path $pythonMainDir "python3.dll"
-        
-        if (Test-Path $python312Main) {
-            Copy-Item -Path $python312Main -Destination "$ReleaseDir\DLLs\" -Force
-            Write-Host "    ✓ Copied python312.dll from main Python directory" -ForegroundColor Green
-            $pythonFound = $true
-        }
-        if (Test-Path $python3Main) {
-            Copy-Item -Path $python3Main -Destination "$ReleaseDir\DLLs\" -Force
-            Write-Host "    ✓ Copied python3.dll from main Python directory" -ForegroundColor Green
-            $pythonFound = $true
-        }
-        
-        # Also copy vcruntime DLLs from Python directory if they exist
-        $vcruntime140 = Join-Path $pythonMainDir "vcruntime140.dll"
-        $vcruntime140_1 = Join-Path $pythonMainDir "vcruntime140_1.dll"
-        if (Test-Path $vcruntime140) {
-            Copy-Item -Path $vcruntime140 -Destination "$ReleaseDir\DLLs\" -Force -ErrorAction SilentlyContinue
-        }
-        if (Test-Path $vcruntime140_1) {
-            Copy-Item -Path $vcruntime140_1 -Destination "$ReleaseDir\DLLs\" -Force -ErrorAction SilentlyContinue
-        }
-    }
     
     # Also search in the entire build directory for python312.dll as fallback
     if (-not (Test-Path "$ReleaseDir\DLLs\python312.dll")) {
