@@ -206,45 +206,104 @@ if ($pythonDlls.Count -eq 0) {
     }
     
     # Final check: try to find Python DLLs from system Python installation as fallback
+    # Also search more broadly for python312.dll
     if (-not $pythonFound) {
-        Write-Host "  Attempting to find Python from system installation..." -ForegroundColor Yellow
+        Write-Host "  Attempting to find Python DLLs from system installation..." -ForegroundColor Yellow
+        
+        # First, check if python312.dll specifically is missing
+        $python312Exists = Test-Path "$ReleaseDir\DLLs\python312.dll"
+        
+        # Search in common Python installation locations
         $systemPythonPaths = @(
             "$env:ProgramFiles\Python312",
-            "$env:ProgramFiles\Python311",
+            "$env:ProgramFiles\Python311", 
             "$env:ProgramFiles\Python310",
             "${env:ProgramFiles(x86)}\Python312",
             "${env:ProgramFiles(x86)}\Python311",
-            "${env:ProgramFiles(x86)}\Python310"
+            "${env:ProgramFiles(x86)}\Python310",
+            "$env:LOCALAPPDATA\Programs\Python\Python312",
+            "$env:LOCALAPPDATA\Programs\Python\Python311",
+            "$env:LOCALAPPDATA\Programs\Python\Python310",
+            "$env:USERPROFILE\AppData\Local\Programs\Python\Python312",
+            "$env:USERPROFILE\AppData\Local\Programs\Python\Python311",
+            "$env:USERPROFILE\AppData\Local\Programs\Python\Python310"
         )
+        
+        # Also search recursively in Program Files for Python directories
+        $searchPaths = @()
+        foreach ($basePath in @("$env:ProgramFiles", "${env:ProgramFiles(x86)}", "$env:LOCALAPPDATA\Programs")) {
+            if (Test-Path $basePath) {
+                $pyDirs = Get-ChildItem -Path $basePath -Directory -Filter "Python*" -ErrorAction SilentlyContinue
+                foreach ($pyDir in $pyDirs) {
+                    if ($pyDir.Name -match "Python312|Python3\.12") {
+                        $searchPaths += $pyDir.FullName
+                    }
+                }
+            }
+        }
+        $systemPythonPaths = $searchPaths + $systemPythonPaths
         
         foreach ($pyPath in $systemPythonPaths) {
             if (Test-Path $pyPath) {
+                # Prioritize python312.dll
                 $sysPython312 = Join-Path $pyPath "python312.dll"
                 $sysPython3 = Join-Path $pyPath "python3.dll"
+                
+                # Also check in DLLs subdirectory
+                $sysPython312Dlls = Join-Path $pyPath "DLLs\python312.dll"
+                $sysPython3Dlls = Join-Path $pyPath "DLLs\python3.dll"
+                
+                # Copy python312.dll first (most important)
                 if (Test-Path $sysPython312) {
                     Copy-Item -Path $sysPython312 -Destination "$ReleaseDir\DLLs\" -Force
-                    Write-Host "    Copied python312.dll from system Python" -ForegroundColor Green
+                    Write-Host "    Copied python312.dll from: $pyPath" -ForegroundColor Green
+                    $python312Exists = $true
+                    $pythonFound = $true
+                } elseif (Test-Path $sysPython312Dlls) {
+                    Copy-Item -Path $sysPython312Dlls -Destination "$ReleaseDir\DLLs\" -Force
+                    Write-Host "    Copied python312.dll from: $pyPath\DLLs" -ForegroundColor Green
+                    $python312Exists = $true
                     $pythonFound = $true
                 }
-                if (Test-Path $sysPython3) {
-                    Copy-Item -Path $sysPython3 -Destination "$ReleaseDir\DLLs\" -Force
-                    Write-Host "    Copied python3.dll from system Python" -ForegroundColor Green
-                    $pythonFound = $true
+                
+                # Copy python3.dll as well if not already present
+                if (-not (Test-Path "$ReleaseDir\DLLs\python3.dll")) {
+                    if (Test-Path $sysPython3) {
+                        Copy-Item -Path $sysPython3 -Destination "$ReleaseDir\DLLs\" -Force
+                        Write-Host "    Copied python3.dll from: $pyPath" -ForegroundColor Green
+                        $pythonFound = $true
+                    } elseif (Test-Path $sysPython3Dlls) {
+                        Copy-Item -Path $sysPython3Dlls -Destination "$ReleaseDir\DLLs\" -Force
+                        Write-Host "    Copied python3.dll from: $pyPath\DLLs" -ForegroundColor Green
+                        $pythonFound = $true
+                    }
                 }
-                if ($pythonFound) { break }
+                
+                if ($python312Exists) { break }
             }
         }
     }
     
-    if (-not $pythonFound) {
-        Write-Host "  WARNING: Python DLLs (python312.dll, python3.dll) were not found!" -ForegroundColor Red
-        Write-Host "  The application may not run correctly." -ForegroundColor Red
-        Write-Host "  Please ensure serious_python downloads Python during the build process." -ForegroundColor Yellow
+    # Final verification: Check if python312.dll is present
+    $python312Final = Test-Path "$ReleaseDir\DLLs\python312.dll"
+    $python3Final = Test-Path "$ReleaseDir\DLLs\python3.dll"
+    
+    if (-not $python312Final) {
+        Write-Host "  ERROR: python312.dll was not found!" -ForegroundColor Red
+        Write-Host "  The application will NOT work without python312.dll" -ForegroundColor Red
+        Write-Host "  Please ensure Python 3.12 is installed or serious_python downloads it during build" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  You can manually copy python312.dll:" -ForegroundColor Yellow
+        Write-Host "    1. Find python312.dll in your Python 3.12 installation" -ForegroundColor White
+        Write-Host "    2. Copy it to: $ReleaseDir\DLLs\" -ForegroundColor White
+        exit 1
     } else {
         # Verify DLLs are now present
         $finalCheck = Get-ChildItem "$ReleaseDir\DLLs" -Filter "python*.dll" -ErrorAction SilentlyContinue
-        if ($finalCheck.Count -gt 0) {
-            Write-Host "  Python DLLs successfully copied: $($finalCheck.Count) file(s)" -ForegroundColor Green
+        $dllList = $finalCheck | ForEach-Object { $_.Name } | Sort-Object
+        Write-Host "  Python DLLs successfully copied: $($finalCheck.Count) file(s)" -ForegroundColor Green
+        foreach ($dll in $dllList) {
+            Write-Host "    - $dll" -ForegroundColor Gray
         }
     }
 } else {
@@ -274,7 +333,11 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Distribution folder: $((Resolve-Path $OutputDir).Path)" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "To share your app:" -ForegroundColor Yellow
+Write-Host "To create a single installer EXE file:" -ForegroundColor Yellow
+Write-Host "  Run: .\create_installer.ps1" -ForegroundColor White
+Write-Host "  This creates: dist\DeepFocus_Setup.exe (single file installer)" -ForegroundColor Gray
+Write-Host ""
+Write-Host "To share your app (alternative):" -ForegroundColor Yellow
 Write-Host "  1. Zip the entire '$OutputDir' folder" -ForegroundColor White
 Write-Host "  2. Share the zip file" -ForegroundColor White
 Write-Host "  3. Recipients extract and run deepfocus.exe from the folder" -ForegroundColor White
