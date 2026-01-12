@@ -275,7 +275,7 @@ if (-not (Test-Path "$ReleaseDir\DLLs\python312.dll")) {
     )
     
     # Also check Release directory itself recursively (sometimes DLLs are copied there directly)
-    $releasePythonDlls = Get-ChildItem "$ReleaseDir" -Recurse -Filter "python*.dll" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "^python(312|3)\.dll$" }
+    $releasePythonDlls = Get-ChildItem "$ReleaseDir" -Recurse -Filter "python*.dll" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^python(312|3)\.dll$' }
     if ($releasePythonDlls.Count -gt 0) {
         Write-Host "  Found Python DLLs in Release directory - copying to DLLs folder..." -ForegroundColor Cyan
         foreach ($dll in $releasePythonDlls) {
@@ -619,7 +619,8 @@ Set-ItemProperty -Path $regPath -Name "DisplayName" -Value "DeepFocus - Social M
 Set-ItemProperty -Path $regPath -Name "DisplayIcon" -Value $exePath -Force
 Set-ItemProperty -Path $regPath -Name "Publisher" -Value "NeuroBrain" -Force
 Set-ItemProperty -Path $regPath -Name "DisplayVersion" -Value "0.1.0" -Force
-Set-ItemProperty -Path $regPath -Name "UninstallString" -Value "powershell.exe -Command `"Remove-Item -Path '$installDir' -Recurse -Force`"" -Force
+$uninstallCmd = "powershell.exe -Command \"Remove-Item -Path '$installDir' -Recurse -Force\""
+Set-ItemProperty -Path $regPath -Name "UninstallString" -Value $uninstallCmd -Force
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
@@ -677,13 +678,13 @@ if (Test-Path "dist\DeepFocus_Installer.ps1") {
     Write-Host "To distribute:" -ForegroundColor Yellow
     Write-Host "  Share the file: dist\DeepFocus_Installer.ps1" -ForegroundColor White
     Write-Host "  Users can:" -ForegroundColor White
-    Write-Host "    - Right-click and 'Run with PowerShell', OR" -ForegroundColor Gray
+    Write-Host "    - Right-click and Run with PowerShell, OR" -ForegroundColor Gray
     Write-Host "    - Double-click DeepFocus_Installer.bat" -ForegroundColor Gray
     Write-Host "  The installer will request admin privileges and install DeepFocus" -ForegroundColor Gray
 } else {
     Write-Host ""
     Write-Host "To share your app:" -ForegroundColor Yellow
-    Write-Host "  1. Zip the entire '$OutputDir' folder" -ForegroundColor White
+    Write-Host "  1. Zip the entire `"$OutputDir`" folder" -ForegroundColor White
     Write-Host "  2. Share the zip file" -ForegroundColor White
     Write-Host "  3. Recipients extract and run deepfocus.exe from the folder" -ForegroundColor White
 }
