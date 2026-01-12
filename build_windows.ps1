@@ -23,8 +23,8 @@ Write-Host ""
 
 # Step 1: Run Flet build
 try {
-    Write-Host "Running: flet build windows" -ForegroundColor Cyan
-    $buildResult = & flet build windows 2>&1
+    Write-Host "Running: flet build windows --module-name src.main" -ForegroundColor Cyan
+    $buildResult = & flet build windows --module-name src.main 2>&1
     $buildOutput = $buildResult | Out-String
     
     # Check if build completed (even if install step fails)

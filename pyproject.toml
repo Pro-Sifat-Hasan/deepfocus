@@ -39,6 +39,7 @@ product = "DeepFocus"
 company = "NeuroBrain"
 copyright = "Created by Sifat"
 version = "0.1.0"
+app.module = "src.main"  # Entry point: src/main.py
 
 [tool.flet.app]
 path = "src"       # The directory containing your code
