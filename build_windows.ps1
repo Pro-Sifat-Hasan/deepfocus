@@ -27,39 +27,128 @@ try {
     $buildResult = & flet build windows --module-name src.main 2>&1
     $buildOutput = $buildResult | Out-String
     
+    # Always show the full build output if there's an error
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        Write-Host "`n=== Build Output ===" -ForegroundColor Yellow
+        Write-Host $buildOutput -ForegroundColor Gray
+        Write-Host "=== End Build Output ===`n" -ForegroundColor Yellow
+    }
+    
     # Check if build completed (even if install step fails)
     if ($buildOutput -match "Building Windows application.*?(\d+\.\d+s)") {
         Write-Host "Build compilation completed!" -ForegroundColor Green
     }
     
-    # Show any errors but continue (install step failures are expected)
+    # Check if build actually failed with a real error (not just install step)
+    if ($exitCode -ne 0) {
+        # Check if it's just the install step failure (which we can ignore)
+        if ($buildOutput -match "error MSB3073" -and $buildOutput -match "cmake_install\.cmake") {
+            Write-Host "Note: Install step failed (this is okay - we'll copy files manually)" -ForegroundColor Yellow
+        } elseif ($buildOutput -match "Invalid character escape.*cmake_install") {
+            Write-Host "Note: CMake install error detected (known issue with Windows paths)" -ForegroundColor Yellow
+            Write-Host "      This doesn't affect functionality - files are copied correctly" -ForegroundColor Gray
+        } else {
+            # Real build error - show it and exit
+            Write-Host "ERROR: Flet build failed with exit code $exitCode" -ForegroundColor Red
+            Write-Host "Please review the build output above to identify the issue." -ForegroundColor Yellow
+            exit 1
+        }
+    }
+    
+    # Show any install step errors but continue (these are expected)
     if ($buildOutput -match "error MSB3073") {
         Write-Host "Note: Install step failed (this is okay - we'll copy files manually)" -ForegroundColor Yellow
     }
     
     # Check for CMake path escape error (common issue with msvcp140.dll path)
-    if ($buildOutput -match "Invalid character escape|cmake_install\.cmake.*error") {
+    if ($buildOutput -match "Invalid character escape.*msvcp140|cmake_install\.cmake.*error") {
         Write-Host "Note: CMake install error detected (known issue with Windows paths)" -ForegroundColor Yellow
         Write-Host "      This doesn't affect functionality - files are copied correctly" -ForegroundColor Gray
     }
     
-    # Check if build actually succeeded
-    if (-not (Test-Path $ReleaseDir)) {
-        Write-Host "ERROR: Release directory not found. Build may have failed completely." -ForegroundColor Red
-        exit 1
+    # Check if build actually succeeded (deepfocus.exe should exist)
+    if (-not (Test-Path "$ReleaseDir\deepfocus.exe")) {
+        # Check if flutter_windows.dll exists in ephemeral (it might not be copied yet)
+        $flutterDllEphemeral = "build\flutter\windows\flutter\ephemeral\flutter_windows.dll"
+        if (-not (Test-Path $flutterDllEphemeral) -and -not (Test-Path "$ReleaseDir\deepfocus.exe")) {
+            Write-Host "ERROR: Build appears to have failed - deepfocus.exe not found." -ForegroundColor Red
+            Write-Host "       Please check the build output above for errors." -ForegroundColor Yellow
+            exit 1
+        }
     }
 } catch {
-    Write-Host "Error during flet build: $_" -ForegroundColor Red
-    Write-Host "Please check the error messages above." -ForegroundColor Yellow
-    if (-not (Test-Path $ReleaseDir)) {
+    Write-Host "ERROR: Exception during flet build: $_" -ForegroundColor Red
+    Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Gray
+    if (-not (Test-Path "$ReleaseDir\deepfocus.exe")) {
         exit 1
     }
 }
 
 Write-Host ""
-Write-Host "[2/4] Copying plugin DLLs..." -ForegroundColor Yellow
+Write-Host "[2/4] Copying essential build files..." -ForegroundColor Yellow
 
-# Step 2: Copy plugin DLLs
+# Step 2a: Ensure Release directory exists
+if (-not (Test-Path $ReleaseDir)) {
+    New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
+    Write-Host "  Created Release directory: $ReleaseDir" -ForegroundColor Cyan
+}
+
+# Step 2b: Copy flutter_windows.dll if missing (install step might have failed)
+$flutterDllEphemeral = "build\flutter\windows\flutter\ephemeral\flutter_windows.dll"
+if (-not (Test-Path "$ReleaseDir\flutter_windows.dll") -and (Test-Path $flutterDllEphemeral)) {
+    Write-Host "  Copying flutter_windows.dll from ephemeral directory..." -ForegroundColor Cyan
+    if (-not (Test-Path $ReleaseDir)) {
+        New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
+    }
+    Copy-Item -Path $flutterDllEphemeral -Destination "$ReleaseDir\flutter_windows.dll" -Force
+    Write-Host "    ✓ Copied flutter_windows.dll" -ForegroundColor Green
+}
+
+# Step 2c: Copy deepfocus.exe if it's in a different location
+if (-not (Test-Path "$ReleaseDir\deepfocus.exe")) {
+    $exeSearchPaths = @(
+        "build\flutter\build\windows\x64\runner\Release\deepfocus.exe",
+        "build\flutter\build\windows\x64\Release\deepfocus.exe",
+        "build\flutter\build\windows\runner\Release\deepfocus.exe"
+    )
+    foreach ($path in $exeSearchPaths) {
+        if (Test-Path $path) {
+            Write-Host "  Copying deepfocus.exe from $path..." -ForegroundColor Cyan
+            if (-not (Test-Path $ReleaseDir)) {
+                New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
+            }
+            Copy-Item -Path $path -Destination "$ReleaseDir\deepfocus.exe" -Force
+            Write-Host "    ✓ Copied deepfocus.exe" -ForegroundColor Green
+            break
+        }
+    }
+}
+
+# Step 2d: Copy flutter_windows.dll if it's in a different location (backup search)
+if (-not (Test-Path "$ReleaseDir\flutter_windows.dll")) {
+    $dllSearchPaths = @(
+        "build\flutter\build\windows\x64\runner\Release\flutter_windows.dll",
+        "build\flutter\build\windows\x64\Release\flutter_windows.dll",
+        "build\flutter\build\windows\runner\Release\flutter_windows.dll",
+        "build\flutter\windows\flutter\ephemeral\flutter_windows.dll"
+    )
+    foreach ($path in $dllSearchPaths) {
+        if (Test-Path $path) {
+            Write-Host "  Copying flutter_windows.dll from $path..." -ForegroundColor Cyan
+            if (-not (Test-Path $ReleaseDir)) {
+                New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
+            }
+            Copy-Item -Path $path -Destination "$ReleaseDir\flutter_windows.dll" -Force
+            Write-Host "    ✓ Copied flutter_windows.dll" -ForegroundColor Green
+            break
+        }
+    }
+}
+
+# Step 2e: Copy plugin DLLs
+Write-Host ""
+Write-Host "  Copying plugin DLLs..." -ForegroundColor Cyan
 if (Test-Path $PluginsDir) {
     $pluginDlls = Get-ChildItem -Path $PluginsDir -Recurse -Filter "*plugin*.dll" -ErrorAction SilentlyContinue
     
