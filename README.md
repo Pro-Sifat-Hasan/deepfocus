@@ -59,22 +59,32 @@ python -m src.main
 ### Building Windows Executable
 
 **Automated Build (Recommended):**
+
+Simply run:
 ```bash
 .\build_windows.ps1
 ```
 
-This script will:
-- Run `flet build windows` automatically
-- Copy all plugin DLLs
-- Verify Python runtime dependencies
-- Create a distribution package in `dist/DeepFocus/` folder
+This fully automated script will:
+1. Run `flet build windows` (handles compilation)
+2. Automatically copy all plugin DLLs
+3. Copy Python runtime DLLs from serious_python
+4. Verify all required files are present
+5. Create a complete distribution package in `dist/DeepFocus/` folder
 
-The distribution folder contains everything needed - just zip it and share!
+**Distribution Package:**
+- The `dist/DeepFocus/` folder contains **everything** needed to run the app
+- Zip this entire folder and share it
+- Recipients extract and run `deepfocus.exe` from the folder
+- All DLLs, Python runtime, and dependencies are included
+- No manual installation or setup required
 
-**Manual Build:**
+**Note:** The executable must stay with its folder contents (DLLs, Lib, data, etc.) - they work together as a complete package.
+
+**Manual Build (if needed):**
 ```bash
 flet build windows
-.\copy_plugin_dlls.ps1  # Copy plugin DLLs if install step fails
+.\copy_plugin_dlls.ps1  # Copy plugin DLLs manually
 ```
 
 The executable will be located in `build/flutter/build/windows/x64/runner/Release/`. The built application automatically requests administrator privileges when launched.
