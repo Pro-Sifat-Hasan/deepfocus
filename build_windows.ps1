@@ -338,19 +338,19 @@ try {
     $archiveBytes = [System.IO.File]::ReadAllBytes($archivePath)
     $archiveBase64 = [Convert]::ToBase64String($archiveBytes)
     
-    # Create self-contained installer script
-    $installerScript = @"
+    # Create self-contained installer script (avoid nested here-strings)
+    $installerScriptHeader = @'
 # DeepFocus Installer - Self-Contained
 # This installer contains all files embedded
 
-`$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 
 # Check admin privileges
-`$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not `$isAdmin) {
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
     Write-Host "Requesting Administrator privileges..." -ForegroundColor Yellow
-    `$scriptPath = `$MyInvocation.MyCommand.Path
-    Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ``"`$scriptPath``"" -Wait
+    $scriptPath = $MyInvocation.MyCommand.Path
+    Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`"" -Wait
     exit
 }
 
@@ -360,61 +360,63 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Extract embedded archive
-`$base64Archive = @"
-$archiveBase64
+$base64Archive = @"
+'@
+    
+    $installerScriptFooter = @'
 "@
 
-`$tempArchive = Join-Path `$env:TEMP "DeepFocus_`$([Guid]::NewGuid().ToString().Substring(0,8)).zip"
-`$archiveBytes = [Convert]::FromBase64String(`$base64Archive)
-[System.IO.File]::WriteAllBytes(`$tempArchive, `$archiveBytes)
+$tempArchive = Join-Path $env:TEMP "DeepFocus_$([Guid]::NewGuid().ToString().Substring(0,8)).zip"
+$archiveBytes = [Convert]::FromBase64String($base64Archive)
+[System.IO.File]::WriteAllBytes($tempArchive, $archiveBytes)
 
 # Install location
-`$installDir = "`$env:ProgramFiles\DeepFocus"
-Write-Host "Installing to: `$installDir" -ForegroundColor Cyan
+$installDir = "$env:ProgramFiles\DeepFocus"
+Write-Host "Installing to: $installDir" -ForegroundColor Cyan
 
-if (Test-Path `$installDir) {
+if (Test-Path $installDir) {
     Write-Host "Removing existing installation..." -ForegroundColor Yellow
-    Remove-Item `$installDir -Recurse -Force
+    Remove-Item $installDir -Recurse -Force
 }
-New-Item -ItemType Directory -Path `$installDir -Force | Out-Null
+New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 
 # Extract files
 Write-Host "Extracting files..." -ForegroundColor Yellow
-Expand-Archive -Path `$tempArchive -DestinationPath `$installDir -Force
-Remove-Item `$tempArchive -Force
+Expand-Archive -Path $tempArchive -DestinationPath $installDir -Force
+Remove-Item $tempArchive -Force
 
 # Create shortcuts
 Write-Host "Creating shortcuts..." -ForegroundColor Yellow
-`$startMenu = [Environment]::GetFolderPath("Programs")
-`$startMenuDir = Join-Path `$startMenu "DeepFocus"
-if (-not (Test-Path `$startMenuDir)) {
-    New-Item -ItemType Directory -Path `$startMenuDir -Force | Out-Null
+$startMenu = [Environment]::GetFolderPath("Programs")
+$startMenuDir = Join-Path $startMenu "DeepFocus"
+if (-not (Test-Path $startMenuDir)) {
+    New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null
 }
 
-`$exePath = Join-Path `$installDir "deepfocus.exe"
-`$desktop = [Environment]::GetFolderPath("Desktop")
-`$shell = New-Object -ComObject WScript.Shell
+$exePath = Join-Path $installDir "deepfocus.exe"
+$desktop = [Environment]::GetFolderPath("Desktop")
+$shell = New-Object -ComObject WScript.Shell
 
-`$desktopShortcut = `$shell.CreateShortcut((Join-Path `$desktop "DeepFocus.lnk"))
-`$desktopShortcut.TargetPath = `$exePath
-`$desktopShortcut.WorkingDirectory = `$installDir
-`$desktopShortcut.Description = "DeepFocus - Social Media Blocker"
-`$desktopShortcut.Save()
+$desktopShortcut = $shell.CreateShortcut((Join-Path $desktop "DeepFocus.lnk"))
+$desktopShortcut.TargetPath = $exePath
+$desktopShortcut.WorkingDirectory = $installDir
+$desktopShortcut.Description = "DeepFocus - Social Media Blocker"
+$desktopShortcut.Save()
 
-`$startShortcut = `$shell.CreateShortcut((Join-Path `$startMenuDir "DeepFocus.lnk"))
-`$startShortcut.TargetPath = `$exePath
-`$startShortcut.WorkingDirectory = `$installDir
-`$startShortcut.Description = "DeepFocus - Social Media Blocker"
-`$startShortcut.Save()
+$startShortcut = $shell.CreateShortcut((Join-Path $startMenuDir "DeepFocus.lnk"))
+$startShortcut.TargetPath = $exePath
+$startShortcut.WorkingDirectory = $installDir
+$startShortcut.Description = "DeepFocus - Social Media Blocker"
+$startShortcut.Save()
 
 # Add to Add/Remove Programs
-`$regPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DeepFocus"
-New-Item -Path `$regPath -Force -ErrorAction SilentlyContinue | Out-Null
-Set-ItemProperty -Path `$regPath -Name "DisplayName" -Value "DeepFocus - Social Media Blocker" -Force
-Set-ItemProperty -Path `$regPath -Name "DisplayIcon" -Value `$exePath -Force
-Set-ItemProperty -Path `$regPath -Name "Publisher" -Value "NeuroBrain" -Force
-Set-ItemProperty -Path `$regPath -Name "DisplayVersion" -Value "0.1.0" -Force
-Set-ItemProperty -Path `$regPath -Name "UninstallString" -Value "powershell.exe -Command `"Remove-Item -Path '$installDir' -Recurse -Force`"" -Force
+$regPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DeepFocus"
+New-Item -Path $regPath -Force -ErrorAction SilentlyContinue | Out-Null
+Set-ItemProperty -Path $regPath -Name "DisplayName" -Value "DeepFocus - Social Media Blocker" -Force
+Set-ItemProperty -Path $regPath -Name "DisplayIcon" -Value $exePath -Force
+Set-ItemProperty -Path $regPath -Name "Publisher" -Value "NeuroBrain" -Force
+Set-ItemProperty -Path $regPath -Name "DisplayVersion" -Value "0.1.0" -Force
+Set-ItemProperty -Path $regPath -Name "UninstallString" -Value "powershell.exe -Command `"Remove-Item -Path '$installDir' -Recurse -Force`"" -Force
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
@@ -422,11 +424,14 @@ Write-Host "Installation Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "DeepFocus has been installed successfully!" -ForegroundColor Green
-Write-Host "Location: `$installDir" -ForegroundColor Cyan
+Write-Host "Location: $installDir" -ForegroundColor Cyan
 Write-Host "You can now launch DeepFocus from Desktop or Start Menu." -ForegroundColor Yellow
 Write-Host ""
 Read-Host "Press Enter to exit"
-"@
+'@
+    
+    # Combine header + Base64 archive + footer
+    $installerScript = $installerScriptHeader + "`r`n" + $archiveBase64 + "`r`n" + $installerScriptFooter
 
     # Save installer script
     $installerPath = "dist\DeepFocus_Installer.ps1"
