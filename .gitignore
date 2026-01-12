@@ -52,9 +52,6 @@ backup_hosts/
 *.tmp
 *.temp
 
-# Build templates (can be regenerated)
-build-templates/
-
 # Settings/Config files with sensitive data
 settings.json
 
