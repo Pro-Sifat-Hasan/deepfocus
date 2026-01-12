@@ -58,12 +58,26 @@ python -m src.main
 
 ### Building Windows Executable
 
-Build a standalone executable:
+**Automated Build (Recommended):**
 ```bash
-flet build windows
+.\build_windows.ps1
 ```
 
-The executable will be located in `build/windows/x64/runner/Release/`. The built application automatically requests administrator privileges when launched.
+This script will:
+- Run `flet build windows` automatically
+- Copy all plugin DLLs
+- Verify Python runtime dependencies
+- Create a distribution package in `dist/DeepFocus/` folder
+
+The distribution folder contains everything needed - just zip it and share!
+
+**Manual Build:**
+```bash
+flet build windows
+.\copy_plugin_dlls.ps1  # Copy plugin DLLs if install step fails
+```
+
+The executable will be located in `build/flutter/build/windows/x64/runner/Release/`. The built application automatically requests administrator privileges when launched.
 
 ### Default Credentials
 

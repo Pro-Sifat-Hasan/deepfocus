@@ -103,18 +103,44 @@ $pythonDlls = Get-ChildItem "$ReleaseDir\DLLs" -Filter "python*.dll" -ErrorActio
 if ($pythonDlls.Count -eq 0) {
     Write-Host "  Warning: Python DLLs not found - checking embedded Python..." -ForegroundColor Yellow
     
-    # Check for embedded Python in site-packages (Flet/serious_python may embed it)
-    $embeddedPython = Get-ChildItem "$ReleaseDir\site-packages" -Recurse -Filter "python*.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($embeddedPython) {
-        Write-Host "  Found embedded Python DLL, ensuring DLLs folder exists..." -ForegroundColor Cyan
-        if (-not (Test-Path "$ReleaseDir\DLLs")) {
-            New-Item -ItemType Directory -Path "$ReleaseDir\DLLs" -Force | Out-Null
+    # Ensure DLLs directory exists
+    if (-not (Test-Path "$ReleaseDir\DLLs")) {
+        New-Item -ItemType Directory -Path "$ReleaseDir\DLLs" -Force | Out-Null
+    }
+    
+    $foundDlls = @()
+    
+    # Check serious_python build output for Python DLLs
+    $seriousPythonDir = "build\flutter\build\windows\x64\plugins\serious_python_windows"
+    if (Test-Path $seriousPythonDir) {
+        $pythonDllsFromSerious = Get-ChildItem $seriousPythonDir -Recurse -Filter "python*.dll" -ErrorAction SilentlyContinue
+        if ($pythonDllsFromSerious) {
+            Write-Host "  Found Python DLLs in serious_python build, copying..." -ForegroundColor Cyan
+            foreach ($dll in $pythonDllsFromSerious) {
+                Copy-Item -Path $dll.FullName -Destination "$ReleaseDir\DLLs\" -Force
+                $foundDlls += $dll.Name
+            }
         }
-        Copy-Item -Path $embeddedPython.FullName -Destination "$ReleaseDir\DLLs\" -Force
-        Write-Host "  Python DLL copied to DLLs folder" -ForegroundColor Green
+    }
+    
+    # Check site-packages for embedded Python
+    $embeddedPython = Get-ChildItem "$ReleaseDir\site-packages" -Recurse -Filter "python*.dll" -ErrorAction SilentlyContinue
+    if ($embeddedPython) {
+        Write-Host "  Found Python DLLs in site-packages, copying..." -ForegroundColor Cyan
+        foreach ($dll in $embeddedPython) {
+            $dest = Join-Path "$ReleaseDir\DLLs" $dll.Name
+            if (-not (Test-Path $dest)) {
+                Copy-Item -Path $dll.FullName -Destination "$ReleaseDir\DLLs\" -Force
+                $foundDlls += $dll.Name
+            }
+        }
+    }
+    
+    if ($foundDlls.Count -gt 0) {
+        Write-Host "  Copied $($foundDlls.Count) Python DLL(s): $($foundDlls -join ', ')" -ForegroundColor Green
     } else {
-        Write-Host "  Note: Python runtime should be embedded by serious_python" -ForegroundColor Yellow
-        Write-Host "  If app fails to run, Python runtime may need to be manually added" -ForegroundColor Yellow
+        Write-Host "  Warning: Python DLLs not found automatically" -ForegroundColor Yellow
+        Write-Host "  serious_python should embed Python runtime during build" -ForegroundColor Yellow
     }
 } else {
     Write-Host "  Python DLLs found: $($pythonDlls.Count) file(s)" -ForegroundColor Green
