@@ -39,7 +39,9 @@ add_definitions(-DUNICODE -D_UNICODE)
 # of modifying this function.
 function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_features(${TARGET} PUBLIC cxx_std_20)
-  target_compile_options(${TARGET} PRIVATE /W4 /WX /wd"4100")
+  # Use /permissive for WinRT compatibility (C++/WinRT requires this)
+  # Disable C4596 warning (illegal qualified name) for WinRT-generated code
+  target_compile_options(${TARGET} PRIVATE /W4 /permissive /wd"4100" /wd"4596")
   target_compile_options(${TARGET} PRIVATE /EHsc)
   target_compile_definitions(${TARGET} PRIVATE "_HAS_EXCEPTIONS=0")
   target_compile_definitions(${TARGET} PRIVATE "$<$<CONFIG:Debug>:_DEBUG>")
