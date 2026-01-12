@@ -1,0 +1,58 @@
+[project]
+name = "deepfocus"
+version = "0.1.0"
+description = "Social Media Blocker Desktop Application"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "flet[all]>=0.80.1",
+    "cryptography>=41.0.0",
+    "pystray>=0.19.5",
+    "pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "black>=23.7.0",
+    "ruff>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.flet]
+build_number = 1
+product = "DeepFocus"
+company = "NeuroBrain"
+copyright = "Created by Sifat"
+version = "0.1.0"
+
+[tool.flet.app]
+path = "src"       # The directory containing your code
+module = "main"    # The entry point file (main.py) inside 'src'
+product-name = "DeepFocus"
+company-name = "NeuroBrain"
+copyright = "Created by Sifat"
+hide-window-on-start = true
+
+[tool.flet.splash]
+color = "#FFFFFF"
+dark_color = "#1E1E1E"
+
+# Template configuration - uses local template to avoid network issues during build
+# Template is prepared by running: .\prepare_build_template.ps1
+[tool.flet.template]
+url = "build-templates/flet-build-template"

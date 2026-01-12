@@ -1,0 +1,62 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+# Keep test files, ignore cache
+# tests/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.flet/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Backup files
+backup_hosts/
+*.bak
+*.backup
+
+# Documentation (keep README.md)
+*.md
+!README.md
+
+# Temporary files
+*.tmp
+*.temp
+
+# Build templates (can be regenerated)
+build-templates/
+
+# Settings/Config files with sensitive data
+settings.json
+
+# Git
+.gitignore.bak
