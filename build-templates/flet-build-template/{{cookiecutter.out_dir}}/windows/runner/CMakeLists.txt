@@ -38,3 +38,22 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+# Copy plugin DLLs to the output directory (post-build step)
+# This ensures DLLs are available even if install step fails
+add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E echo "Copying plugin DLLs to output directory..."
+  COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${BINARY_NAME}>"
+)
+
+# Copy all plugin DLLs from plugins directory
+file(GLOB_RECURSE PLUGIN_DLLS "${CMAKE_BINARY_DIR}/plugins/*/Release/*plugin*.dll")
+foreach(plugin_dll ${PLUGIN_DLLS})
+  get_filename_component(dll_name "${plugin_dll}" NAME)
+  add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${plugin_dll}"
+      "$<TARGET_FILE_DIR:${BINARY_NAME}>"
+    COMMENT "Copying ${dll_name}"
+  )
+endforeach()
