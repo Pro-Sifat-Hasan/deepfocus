@@ -325,6 +325,133 @@ Copy-Item -Path "$ReleaseDir\*" -Destination $OutputDir -Recurse -Force
 
 Write-Host "  Distribution package created at: $OutputDir" -ForegroundColor Green
 
+Write-Host ""
+Write-Host "[5/5] Creating single-file installer..." -ForegroundColor Yellow
+
+# Step 5: Create single-file installer
+try {
+    # Create zip archive of distribution folder
+    $archivePath = Join-Path $env:TEMP "DeepFocus_Data_$([Guid]::NewGuid().ToString().Substring(0,8)).zip"
+    Compress-Archive -Path "$OutputDir\*" -DestinationPath $archivePath -Force
+    
+    # Read archive as Base64
+    $archiveBytes = [System.IO.File]::ReadAllBytes($archivePath)
+    $archiveBase64 = [Convert]::ToBase64String($archiveBytes)
+    
+    # Create self-contained installer script
+    $installerScript = @"
+# DeepFocus Installer - Self-Contained
+# This installer contains all files embedded
+
+`$ErrorActionPreference = "Stop"
+
+# Check admin privileges
+`$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not `$isAdmin) {
+    Write-Host "Requesting Administrator privileges..." -ForegroundColor Yellow
+    `$scriptPath = `$MyInvocation.MyCommand.Path
+    Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ``"`$scriptPath``"" -Wait
+    exit
+}
+
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "DeepFocus - Installation" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
+
+# Extract embedded archive
+`$base64Archive = @"
+$archiveBase64
+"@
+
+`$tempArchive = Join-Path `$env:TEMP "DeepFocus_`$([Guid]::NewGuid().ToString().Substring(0,8)).zip"
+`$archiveBytes = [Convert]::FromBase64String(`$base64Archive)
+[System.IO.File]::WriteAllBytes(`$tempArchive, `$archiveBytes)
+
+# Install location
+`$installDir = "`$env:ProgramFiles\DeepFocus"
+Write-Host "Installing to: `$installDir" -ForegroundColor Cyan
+
+if (Test-Path `$installDir) {
+    Write-Host "Removing existing installation..." -ForegroundColor Yellow
+    Remove-Item `$installDir -Recurse -Force
+}
+New-Item -ItemType Directory -Path `$installDir -Force | Out-Null
+
+# Extract files
+Write-Host "Extracting files..." -ForegroundColor Yellow
+Expand-Archive -Path `$tempArchive -DestinationPath `$installDir -Force
+Remove-Item `$tempArchive -Force
+
+# Create shortcuts
+Write-Host "Creating shortcuts..." -ForegroundColor Yellow
+`$startMenu = [Environment]::GetFolderPath("Programs")
+`$startMenuDir = Join-Path `$startMenu "DeepFocus"
+if (-not (Test-Path `$startMenuDir)) {
+    New-Item -ItemType Directory -Path `$startMenuDir -Force | Out-Null
+}
+
+`$exePath = Join-Path `$installDir "deepfocus.exe"
+`$desktop = [Environment]::GetFolderPath("Desktop")
+`$shell = New-Object -ComObject WScript.Shell
+
+`$desktopShortcut = `$shell.CreateShortcut((Join-Path `$desktop "DeepFocus.lnk"))
+`$desktopShortcut.TargetPath = `$exePath
+`$desktopShortcut.WorkingDirectory = `$installDir
+`$desktopShortcut.Description = "DeepFocus - Social Media Blocker"
+`$desktopShortcut.Save()
+
+`$startShortcut = `$shell.CreateShortcut((Join-Path `$startMenuDir "DeepFocus.lnk"))
+`$startShortcut.TargetPath = `$exePath
+`$startShortcut.WorkingDirectory = `$installDir
+`$startShortcut.Description = "DeepFocus - Social Media Blocker"
+`$startShortcut.Save()
+
+# Add to Add/Remove Programs
+`$regPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DeepFocus"
+New-Item -Path `$regPath -Force -ErrorAction SilentlyContinue | Out-Null
+Set-ItemProperty -Path `$regPath -Name "DisplayName" -Value "DeepFocus - Social Media Blocker" -Force
+Set-ItemProperty -Path `$regPath -Name "DisplayIcon" -Value `$exePath -Force
+Set-ItemProperty -Path `$regPath -Name "Publisher" -Value "NeuroBrain" -Force
+Set-ItemProperty -Path `$regPath -Name "DisplayVersion" -Value "0.1.0" -Force
+Set-ItemProperty -Path `$regPath -Name "UninstallString" -Value "powershell.exe -Command `"Remove-Item -Path '$installDir' -Recurse -Force`"" -Force
+
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "Installation Complete!" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "DeepFocus has been installed successfully!" -ForegroundColor Green
+Write-Host "Location: `$installDir" -ForegroundColor Cyan
+Write-Host "You can now launch DeepFocus from Desktop or Start Menu." -ForegroundColor Yellow
+Write-Host ""
+Read-Host "Press Enter to exit"
+"@
+
+    # Save installer script
+    $installerPath = "dist\DeepFocus_Installer.ps1"
+    $installerScript | Out-File -FilePath $installerPath -Encoding UTF8
+    
+    # Cleanup temp archive
+    Remove-Item $archivePath -Force -ErrorAction SilentlyContinue
+    
+    Write-Host "  Single-file installer created: $installerPath" -ForegroundColor Green
+    
+    # Create a simple batch wrapper for easy execution
+    $batchWrapper = @"
+@echo off
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0DeepFocus_Installer.ps1"
+"@
+    $batchPath = "dist\DeepFocus_Installer.bat"
+    $batchWrapper | Out-File -FilePath $batchPath -Encoding ASCII
+    
+    Write-Host "  Batch wrapper created: $batchPath" -ForegroundColor Green
+    
+} catch {
+    Write-Host "  WARNING: Failed to create installer: $_" -ForegroundColor Yellow
+    Write-Host "  Distribution folder is ready at: $OutputDir" -ForegroundColor Gray
+}
+
 # Summary
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
@@ -332,21 +459,28 @@ Write-Host "Build Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Distribution folder: $((Resolve-Path $OutputDir).Path)" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "To create a single installer EXE file:" -ForegroundColor Yellow
-Write-Host "  Run: .\create_installer.ps1" -ForegroundColor White
-Write-Host "  This creates: dist\DeepFocus_Setup.exe (single file installer)" -ForegroundColor Gray
-Write-Host ""
-Write-Host "To share your app (alternative):" -ForegroundColor Yellow
-Write-Host "  1. Zip the entire '$OutputDir' folder" -ForegroundColor White
-Write-Host "  2. Share the zip file" -ForegroundColor White
-Write-Host "  3. Recipients extract and run deepfocus.exe from the folder" -ForegroundColor White
-Write-Host "     (All DLLs and dependencies are included in the folder)" -ForegroundColor Gray
+if (Test-Path "dist\DeepFocus_Installer.ps1") {
+    $installerSize = [math]::Round((Get-Item "dist\DeepFocus_Installer.ps1").Length / 1MB, 2)
+    Write-Host ""
+    Write-Host "Single-file installer created!" -ForegroundColor Green
+    Write-Host "  File: dist\DeepFocus_Installer.ps1 ($installerSize MB)" -ForegroundColor Cyan
+    Write-Host "  Wrapper: dist\DeepFocus_Installer.bat (double-click to run)" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "To distribute:" -ForegroundColor Yellow
+    Write-Host "  Share the file: dist\DeepFocus_Installer.ps1" -ForegroundColor White
+    Write-Host "  Users can:" -ForegroundColor White
+    Write-Host "    - Right-click and 'Run with PowerShell', OR" -ForegroundColor Gray
+    Write-Host "    - Double-click DeepFocus_Installer.bat" -ForegroundColor Gray
+    Write-Host "  The installer will request admin privileges and install DeepFocus" -ForegroundColor Gray
+} else {
+    Write-Host ""
+    Write-Host "To share your app:" -ForegroundColor Yellow
+    Write-Host "  1. Zip the entire '$OutputDir' folder" -ForegroundColor White
+    Write-Host "  2. Share the zip file" -ForegroundColor White
+    Write-Host "  3. Recipients extract and run deepfocus.exe from the folder" -ForegroundColor White
+}
 Write-Host ""
 Write-Host "To test the app:" -ForegroundColor Yellow
 Write-Host "  cd $OutputDir" -ForegroundColor White
 Write-Host "  .\deepfocus.exe" -ForegroundColor White
-Write-Host ""
-Write-Host "Note: The exe must stay with its DLL and data folders to work." -ForegroundColor Cyan
-Write-Host "      Share the entire folder, not just the exe file." -ForegroundColor Cyan
 Write-Host ""
