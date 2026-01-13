@@ -1,11 +1,18 @@
 """
 System integration utilities: system tray, auto-start, admin checks.
+Simplified and optimized.
 """
 import sys
 import platform
 import winreg
 from pathlib import Path
 from typing import Optional, Callable
+import threading
+
+
+# Global tray icon singleton
+_global_tray_icon = None
+_global_tray_thread = None
 
 
 class SystemIntegration:
@@ -18,7 +25,6 @@ class SystemIntegration:
         """Check if running with administrator privileges."""
         if not self.is_windows:
             return False
-
         try:
             import ctypes
             return ctypes.windll.shell32.IsUserAnAdmin() != 0
@@ -26,16 +32,7 @@ class SystemIntegration:
             return False
 
     def set_auto_start(self, enabled: bool, app_path: str) -> bool:
-        """
-        Set application to start automatically on Windows boot with administrator privileges.
-        
-        Args:
-            enabled: True to enable, False to disable
-            app_path: Full path to the application executable
-        
-        Returns:
-            True if successful, False otherwise
-        """
+        """Set application to start automatically on Windows boot."""
         if not self.is_windows:
             return False
 
@@ -50,27 +47,21 @@ class SystemIntegration:
             app_name = "DeepFocus"
 
             if enabled:
-                # Check if running as exe (frozen) or script
                 if getattr(sys, 'frozen', False):
-                    # For exe: launch with --minimized flag to start in tray
-                    # The app will automatically request admin privileges on startup
-                    # No need to use "runas" in registry - the EXE manifest handles it
                     app_with_args = f'"{app_path}" --minimized'
-                    winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, app_with_args)
                 else:
-                    # For script: direct path with minimized flag
-                    winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, f'"{app_path}" --minimized')
+                    app_with_args = f'"{app_path}" --minimized'
+                winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, app_with_args)
             else:
                 try:
                     winreg.DeleteValue(key, app_name)
                 except FileNotFoundError:
-                    pass  # Already removed
+                    pass
 
             winreg.CloseKey(key)
             return True
 
-        except Exception as e:
-            print(f"Error setting auto-start: {e}")
+        except Exception:
             return False
 
     def is_auto_start_enabled(self, app_name: str = "DeepFocus") -> bool:
@@ -104,91 +95,89 @@ class SystemIntegration:
         quit_callback: Callable,
         menu_title: str = "DeepFocus"
     ):
-        """
-        Create system tray icon using global singleton to prevent duplicates.
-        
-        Args:
-            icon_path: Path to icon file (optional)
-            show_callback: Function to call when showing window
-            quit_callback: Function to call when quitting
-            menu_title: Title for tray menu
-        
-        Returns:
-            Tray icon instance or None
-        """
+        """Create system tray icon (singleton)."""
         return get_or_create_tray_icon(icon_path, show_callback, quit_callback, menu_title)
 
     def get_app_path(self) -> str:
         """Get the path to the current application executable."""
         if getattr(sys, 'frozen', False):
-            # Running as compiled executable
             return sys.executable
         else:
-            # Running as script - return Python interpreter with module path
-            python_exe = sys.executable
-            module_path = str(Path(__file__).parent.parent / "main.py")
-            return f'"{python_exe}" -m src.main'
+            return f'"{sys.executable}" -m src.main'
 
 
-# Global system integration instance
+# Global instance
 system_integration = SystemIntegration()
 
-# Global tray icon singleton to prevent duplicates
-_global_tray_icon = None
-_global_tray_thread = None
 
-
-def get_or_create_tray_icon(icon_path: Optional[str], show_callback: Callable, 
-                            quit_callback: Callable, menu_title: str = "DeepFocus"):
-    """Get or create a single global system tray icon instance.
-    
-    This ensures only ONE tray icon exists, preventing duplicates.
-    """
+def stop_tray_icon():
+    """Stop and reset the global tray icon. Call this on quit."""
     global _global_tray_icon, _global_tray_thread
     
-    # If tray icon already exists and is running, return it
     if _global_tray_icon is not None:
         try:
-            # Check if thread is still alive
+            _global_tray_icon.stop()
+        except Exception:
+            pass
+        _global_tray_icon = None
+    
+    _global_tray_thread = None
+
+
+def get_or_create_tray_icon(
+    icon_path: Optional[str],
+    show_callback: Callable,
+    quit_callback: Callable,
+    menu_title: str = "DeepFocus"
+):
+    """Get or create a single global system tray icon instance."""
+    global _global_tray_icon, _global_tray_thread
+
+    # If tray icon already exists and running, return it
+    if _global_tray_icon is not None:
+        try:
             if _global_tray_thread and _global_tray_thread.is_alive():
                 return _global_tray_icon
-        except:
+        except Exception:
             pass
-    
-    # Create new tray icon
+
     try:
         import pystray
         from PIL import Image, ImageDraw
-        import threading
-        
-        # Create default icon if none provided
+
+        # Create icon image
         if icon_path and Path(icon_path).exists():
             image = Image.open(icon_path)
         else:
-            # Create a simple default icon (blue background with white square)
-            image = Image.new('RGB', (64, 64), color='blue')
+            # Create default icon (blue with white square)
+            image = Image.new('RGB', (64, 64), color='#1a5a4c')
             draw = ImageDraw.Draw(image)
             draw.rectangle([16, 16, 48, 48], fill='white')
 
-        # Create menu with proper callbacks
+        # Wrap quit callback to also stop tray icon
+        def quit_with_cleanup():
+            stop_tray_icon()
+            quit_callback()
+
+        # Create menu
         menu = pystray.Menu(
             pystray.MenuItem("Show", lambda icon, item: show_callback()),
-            pystray.MenuItem("Quit", lambda icon, item: quit_callback())
+            pystray.MenuItem("Quit", lambda icon, item: quit_with_cleanup())
         )
 
         # Create tray icon
         _global_tray_icon = pystray.Icon(menu_title, image, menu_title, menu)
 
-        # Run in separate thread
+        # Run in separate daemon thread
         def run_tray():
             try:
                 _global_tray_icon.run()
             except Exception:
-                pass  # Silent fail
+                pass
 
         _global_tray_thread = threading.Thread(target=run_tray, daemon=True)
         _global_tray_thread.start()
-        
+
         return _global_tray_icon
 
     except ImportError:

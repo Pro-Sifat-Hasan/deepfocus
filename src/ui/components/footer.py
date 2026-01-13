@@ -19,6 +19,6 @@ def create_footer() -> ft.Container:
             color=GREY_600,
             text_align=ft.TextAlign.CENTER,
         ),
-        padding=ft.Padding.only(bottom=10),
-        alignment=ft.Alignment.CENTER,
+        padding=ft.padding.only(bottom=10),
+        alignment=ft.alignment.center,
     )

@@ -8,16 +8,16 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from core.auth import Auth
-from config.constants import DEFAULT_PASSWORD
-
 
 class TestAuth:
     """Test authentication functionality."""
 
     def setup_method(self):
         """Setup test fixtures."""
+        from core.auth import Auth
+        from config.constants import DEFAULT_PASSWORD
         self.auth = Auth()
+        self.DEFAULT_PASSWORD = DEFAULT_PASSWORD
 
     def test_verify_default_password(self):
         """Test verification of default password."""
@@ -25,7 +25,7 @@ class TestAuth:
         self.auth.initialize_main_password()
         
         # Should verify correctly
-        assert self.auth.verify_main_password(DEFAULT_PASSWORD) is True
+        assert self.auth.verify_main_password(self.DEFAULT_PASSWORD) is True
         assert self.auth.verify_main_password("wrong_password") is False
 
     def test_hash_password(self):
@@ -46,12 +46,12 @@ class TestAuth:
         
         # Change password
         new_password = "new_password123"
-        success = self.auth.change_main_password(DEFAULT_PASSWORD, new_password)
+        success = self.auth.change_main_password(self.DEFAULT_PASSWORD, new_password)
         
         assert success is True
         
         # Old password should not work
-        assert self.auth.verify_main_password(DEFAULT_PASSWORD) is False
+        assert self.auth.verify_main_password(self.DEFAULT_PASSWORD) is False
         
         # New password should work
         assert self.auth.verify_main_password(new_password) is True

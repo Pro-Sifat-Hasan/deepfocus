@@ -41,7 +41,7 @@ def create_login_page(page: ft.Page, on_login_success: Callable) -> ft.Container
     )
     
     # Login button
-    login_button = ft.Button(
+    login_button = ft.ElevatedButton(
         lang.translate("login_button"),
         on_click=lambda e: _handle_login(page, password_field, error_text, on_login_success),
         width=200,
@@ -86,8 +86,15 @@ def _handle_login(
     on_login_success: Callable,
 ) -> None:
     """Handle login attempt."""
-    password = password_field.value
+    # Get password and strip whitespace
+    password = password_field.value.strip() if password_field.value else ""
     
+    # Clear previous errors
+    error_text.visible = False
+    error_text.value = ""
+    page.update()
+    
+    # Validate password is not empty
     if not password:
         error_text.value = lang.translate("login_required")
         error_text.visible = True
@@ -95,13 +102,29 @@ def _handle_login(
         return
     
     # Verify password
-    if auth.verify_main_password(password):
-        error_text.visible = False
-        password_field.value = ""
-        page.update()
-        on_login_success()
-    else:
-        error_text.value = lang.translate("login_error")
+    try:
+        if auth.verify_main_password(password):
+            # Success - hide error and proceed
+            error_text.visible = False
+            error_text.value = ""
+            password_field.value = ""
+            page.update()
+            # Call success callback
+            try:
+                on_login_success()
+            except Exception as e:
+                # Show error if login success callback fails
+                error_text.value = f"Error: {str(e)}"
+                error_text.visible = True
+                page.update()
+        else:
+            # Wrong password
+            error_text.value = lang.translate("login_error")
+            error_text.visible = True
+            password_field.value = ""
+            page.update()
+    except Exception as e:
+        # Handle any exceptions during verification
+        error_text.value = f"Login error: {str(e)}"
         error_text.visible = True
-        password_field.value = ""
         page.update()

@@ -16,8 +16,6 @@ class TestSettings:
 
     def test_default_settings(self):
         """Test default settings values."""
-        # Note: This test may modify actual settings.json
-        # In production, use a test settings file
         from config.settings import Settings
         
         # Create temporary settings

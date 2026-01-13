@@ -1,14 +1,15 @@
 """
 Main dashboard page with platform toggles and navigation.
+Simplified and optimized.
 """
 import flet as ft
 from typing import Callable
 
 from ..core.blocker import Blocker
 from ..core.auth import auth
-from ..config.constants import PLATFORM_DOMAINS, CASINO_GAMBLING_DOMAINS
+from ..config.constants import PLATFORM_DOMAINS
 from ..config.settings import settings
-from ..config.colors import GREY_600, BLOCKED, UNBLOCKED, ERROR, SUCCESS, PRIMARY, WHITE, GREY_300, GREY_400
+from ..config.colors import GREY_600, BLOCKED, ERROR, SUCCESS, PRIMARY, WHITE, GREY_300, GREY_400
 from ..utils.language import lang
 from .components.platform_card import create_platform_card
 from .components.footer import create_footer
@@ -23,54 +24,12 @@ class MainPage:
         self.platform_cards = {}
         self.content_column = None
         
-        # CRITICAL: Apply blocking/unblocking based on settings (if admin)
-        # This ensures persistence - both blocked AND unblocked states are respected
+        # Sync with hosts file on init (if admin)
         if self.blocker.is_admin():
-            # Sync all platforms with their settings state immediately
-            for platform, domains in PLATFORM_DOMAINS.items():
-                is_blocked_in_settings = settings.is_platform_blocked(platform)
-                
-                if is_blocked_in_settings:
-                    try:
-                        blocked_domains = self.blocker.hosts_manager.get_blocked_domains()
-                        all_blocked = all(domain in blocked_domains for domain in domains)
-                        if not all_blocked:
-                            # Re-apply blocking immediately
-                            self.blocker.block_platform(platform, force=True)
-                            settings.set_platform_blocked(platform, True)
-                    except Exception:
-                        settings.set_platform_blocked(platform, True)
-                else:
-                    # Platform should be UNBLOCKED - ensure it stays unblocked
-                    try:
-                        blocked_domains = self.blocker.hosts_manager.get_blocked_domains()
-                        blocked_domains_for_platform = [d for d in domains if d in blocked_domains]
-                        if blocked_domains_for_platform:
-                            # Unblock immediately
-                            self.blocker.unblock_platform(platform)
-                            settings.set_platform_blocked(platform, False)
-                    except Exception:
-                        settings.set_platform_blocked(platform, False)
-            
-            # Block adult content and casino/gambling if enabled
-            if settings.is_adult_content_blocked():
-                try:
-                    self.blocker.block_adult_content()
-                except Exception:
-                    pass
-            
-            if settings.is_casino_gambling_blocked():
-                try:
-                    self.blocker.block_casino_gambling()
-                except Exception:
-                    pass
-        
-        # Sync settings with hosts file (only if admin)
-        try:
-            if self.blocker.is_admin():
+            try:
                 self.blocker.sync_with_hosts_file()
-        except Exception:
-            pass
+            except Exception:
+                pass
 
     def create_page(self) -> ft.Container:
         """Create the main page UI."""
@@ -88,14 +47,9 @@ class MainPage:
         )
 
         # Create platform cards
-        # Verify and sync blocking state before creating cards
-        if self.blocker.is_admin():
-            self.blocker.sync_with_hosts_file()
-        
         cards = []
         for platform_key in PLATFORM_DOMAINS.keys():
             platform_name = lang.translate(platform_key)
-            # Get state from settings (persistent source of truth)
             is_blocked = settings.is_platform_blocked(platform_key)
             has_password = auth.has_platform_password(platform_key)
             
@@ -125,9 +79,9 @@ class MainPage:
         )
 
         # Adult content card
-        is_blocked = settings.is_adult_content_blocked()
+        adult_is_blocked = settings.is_adult_content_blocked()
         adult_toggle = ft.Switch(
-            value=is_blocked,
+            value=adult_is_blocked,
             label=lang.translate("adult_content"),
             active_color=BLOCKED,
             inactive_thumb_color=GREY_400,
@@ -141,7 +95,11 @@ class MainPage:
                     controls=[
                         ft.Column(
                             controls=[
-                                ft.Text(lang.translate("block_adult") if not is_blocked else lang.translate("unblock_adult"), size=16, weight=ft.FontWeight.BOLD),
+                                ft.Text(
+                                    lang.translate("block_adult") if not adult_is_blocked else lang.translate("unblock_adult"),
+                                    size=16,
+                                    weight=ft.FontWeight.BOLD
+                                ),
                                 ft.Text(lang.translate("adult_content"), size=12, color=GREY_600),
                             ],
                             spacing=5,
@@ -155,7 +113,7 @@ class MainPage:
             elevation=2,
         )
         
-        # Casino/Gambling content card
+        # Casino/Gambling card
         casino_is_blocked = settings.is_casino_gambling_blocked()
         casino_toggle = ft.Switch(
             value=casino_is_blocked,
@@ -177,11 +135,7 @@ class MainPage:
                                     size=16,
                                     weight=ft.FontWeight.BOLD
                                 ),
-                                ft.Text(
-                                    lang.translate("casino_gambling"),
-                                    size=12,
-                                    color=GREY_600
-                                ),
+                                ft.Text(lang.translate("casino_gambling"), size=12, color=GREY_600),
                             ],
                             spacing=5,
                             expand=True,
@@ -198,8 +152,20 @@ class MainPage:
         # Navigation buttons
         nav_buttons = ft.Row(
             controls=[
-                ft.Button(lang.translate("custom_domains"), icon="language", on_click=lambda e: self._navigate_to_custom_domains(), bgcolor=PRIMARY, color=WHITE),
-                ft.Button(lang.translate("settings"), icon="settings", on_click=lambda e: self._navigate_to_settings(), bgcolor=PRIMARY, color=WHITE),
+                ft.ElevatedButton(
+                    lang.translate("custom_domains"),
+                    icon=ft.Icons.LANGUAGE,
+                    on_click=lambda e: self._navigate_to_custom_domains(),
+                    bgcolor=PRIMARY,
+                    color=WHITE
+                ),
+                ft.ElevatedButton(
+                    lang.translate("settings"),
+                    icon=ft.Icons.SETTINGS,
+                    on_click=lambda e: self._navigate_to_settings(),
+                    bgcolor=PRIMARY,
+                    color=WHITE
+                ),
             ],
             alignment=ft.MainAxisAlignment.CENTER,
             spacing=20,
@@ -242,117 +208,86 @@ class MainPage:
         """Toggle platform after password verification."""
         if not auth.verify_platform_password(platform, password):
             self._show_error(lang.translate("incorrect_password"))
-            self._reset_platform_toggle(platform)
+            self._update_platform_card(platform)
             return
         self._toggle_platform(platform, new_state)
 
     def _toggle_platform(self, platform: str, new_state: bool) -> None:
         """Toggle platform block state."""
-        # Update settings first (works without admin)
-        was_blocked = settings.is_platform_blocked(platform)
-        settings.set_platform_blocked(platform, new_state)
-        
-        # Try to apply blocking if admin, but don't fail if not
         if not self.blocker.is_admin():
-            self._show_info(f"Settings updated. Run as Administrator to apply blocking.")
+            self._show_error("Please run as Administrator to apply blocking")
+            settings.set_platform_blocked(platform, new_state)
             self._update_platform_card(platform)
             return
         
         try:
             if new_state:
-                # Block the platform - ALWAYS force re-blocking for real-time effect
-                success = self.blocker.block_platform(platform, force=True)
+                success, error = self.blocker.block_platform(platform, force=True)
                 if success:
                     self._show_success(f"{lang.translate(platform)} blocked successfully")
                 else:
-                    self._show_info("Settings saved. Run as Administrator to apply blocking.")
-                self._update_platform_card(platform)
+                    self._show_error(error or "Failed to block platform")
             else:
-                # Unblock the platform - immediate effect
-                success = self.blocker.unblock_platform(platform)
+                success, error = self.blocker.unblock_platform(platform)
                 if success:
                     self._show_success(f"{lang.translate(platform)} unblocked successfully")
                 else:
-                    self._show_info("Settings saved. Run as Administrator to apply changes.")
-                self._update_platform_card(platform)
-        except Exception:
-            self._show_info("Settings saved. Error applying blocking.")
+                    self._show_error(error or "Failed to unblock platform")
+            
+            self._update_platform_card(platform)
+            
+        except Exception as e:
+            self._show_error(f"Error: {str(e)}")
             self._update_platform_card(platform)
 
     def _handle_adult_content_toggle(self, new_state: bool) -> None:
         """Handle adult content toggle."""
-        # Update settings first (works without admin)
-        settings.set_adult_content_blocked(new_state)
-        
-        # Try to apply blocking if admin, but don't fail if not
         if not self.blocker.is_admin():
-            self._show_info("Settings updated. Run as Administrator to apply blocking.")
+            self._show_error("Please run as Administrator to apply blocking")
+            settings.set_adult_content_blocked(new_state)
             return
         
         try:
             if new_state:
-                success = self.blocker.block_adult_content()
+                success, error = self.blocker.block_adult_content()
                 if success:
-                    from ..config.constants import ADULT_CONTENT_DOMAINS
-                    self._show_success(f"Adult content blocked successfully ({len(ADULT_CONTENT_DOMAINS)} domains)")
+                    self._show_success("Adult content blocked successfully")
                 else:
-                    self._show_info("Settings saved. Blocking will apply when running as Administrator.")
+                    self._show_error(error or "Failed to block adult content")
             else:
-                success = self.blocker.unblock_adult_content()
+                success, error = self.blocker.unblock_adult_content()
                 if success:
                     self._show_success("Adult content unblocked successfully")
                 else:
-                    self._show_info("Settings saved. Changes will apply when running as Administrator.")
-        except Exception:
-            self._show_info("Settings saved. Error applying blocking.")
-    
+                    self._show_error(error or "Failed to unblock adult content")
+        except Exception as e:
+            self._show_error(f"Error: {str(e)}")
+
     def _handle_casino_gambling_toggle(self, new_state: bool) -> None:
         """Handle casino/gambling toggle."""
-        # Update settings first (works without admin)
-        settings.set_casino_gambling_blocked(new_state)
-        
-        # Try to apply blocking if admin, but don't fail if not
         if not self.blocker.is_admin():
-            self._show_info("Settings updated. Run as Administrator to apply blocking.")
+            self._show_error("Please run as Administrator to apply blocking")
+            settings.set_casino_gambling_blocked(new_state)
             return
         
         try:
             if new_state:
-                success = self.blocker.block_casino_gambling()
+                success, error = self.blocker.block_casino_gambling()
                 if success:
                     self._show_success("Casino/Gambling sites blocked successfully")
                 else:
-                    self._show_info("Settings saved. Run as Administrator to apply blocking.")
+                    self._show_error(error or "Failed to block casino/gambling sites")
             else:
-                success = self.blocker.unblock_casino_gambling()
+                success, error = self.blocker.unblock_casino_gambling()
                 if success:
                     self._show_success("Casino/Gambling sites unblocked successfully")
                 else:
-                    self._show_info("Settings saved. Run as Administrator to apply changes.")
-        except Exception:
-            self._show_info("Settings saved. Error applying blocking.")
-
-    def _reset_platform_toggle(self, platform: str) -> None:
-        """Reset platform toggle to current state."""
-        self._update_platform_card(platform)
+                    self._show_error(error or "Failed to unblock casino/gambling sites")
+        except Exception as e:
+            self._show_error(f"Error: {str(e)}")
 
     def _update_platform_card(self, platform: str) -> None:
         """Update platform card to reflect current state."""
-        # Get state from settings (persistent source of truth)
-        is_blocked_in_settings = settings.is_platform_blocked(platform)
-        
-        # Verify against hosts file if admin (for accuracy)
-        if self.blocker.is_admin():
-            is_blocked_in_hosts = self.blocker.is_platform_blocked(platform)
-            # If settings and hosts don't match, sync them immediately (settings is source of truth)
-            if is_blocked_in_settings != is_blocked_in_hosts:
-                # Apply settings to hosts file to sync in real-time
-                if is_blocked_in_settings:
-                    self.blocker.block_platform(platform, force=True)
-                else:
-                    self.blocker.unblock_platform(platform)
-        
-        # Use settings as source of truth for UI
         platform_name = lang.translate(platform)
         is_blocked = settings.is_platform_blocked(platform)
         has_password = auth.has_platform_password(platform)
@@ -368,7 +303,7 @@ class MainPage:
         
         self.platform_cards[platform] = new_card
         
-        # Rebuild page to show updated card
+        # Rebuild page
         if self.content_column:
             for i, control in enumerate(self.content_column.controls):
                 if isinstance(control, ft.Container) and hasattr(control.content, 'controls'):
@@ -392,7 +327,7 @@ class MainPage:
         
         def handle_submit(e=None):
             if password_field.value:
-                self.page.close_dialog()
+                self.page.close(dialog)
                 on_confirm(password_field.value)
         
         password_field.on_submit = handle_submit
@@ -412,14 +347,12 @@ class MainPage:
                 padding=10,
             ),
             actions=[
-                ft.TextButton(content=ft.Text(lang.translate("cancel")), on_click=lambda e: self.page.close_dialog()),
-                ft.Button(lang.translate("ok"), on_click=handle_submit, bgcolor=PRIMARY, color=WHITE),
+                ft.TextButton(content=ft.Text(lang.translate("cancel")), on_click=lambda e: self.page.close(dialog)),
+                ft.ElevatedButton(lang.translate("ok"), on_click=handle_submit, bgcolor=PRIMARY, color=WHITE),
             ],
         )
         
-        self.page.dialog = dialog
-        dialog.open = True
-        self.page.update()
+        self.page.open(dialog)
 
     def _show_error(self, message: str) -> None:
         """Show error message."""
@@ -430,12 +363,6 @@ class MainPage:
     def _show_success(self, message: str) -> None:
         """Show success message."""
         self.page.snack_bar = ft.SnackBar(content=ft.Text(message), bgcolor=SUCCESS)
-        self.page.snack_bar.open = True
-        self.page.update()
-
-    def _show_info(self, message: str) -> None:
-        """Show info message."""
-        self.page.snack_bar = ft.SnackBar(content=ft.Text(message), bgcolor=PRIMARY)
         self.page.snack_bar.open = True
         self.page.update()
 

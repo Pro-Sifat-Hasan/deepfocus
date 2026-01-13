@@ -1,10 +1,12 @@
 """
 Hosts file manager for Windows - handles reading, writing, and backing up hosts file.
+Simplified and optimized for reliable blocking/unblocking.
 """
 import os
 import shutil
 import platform
 import subprocess
+import stat
 from pathlib import Path
 from typing import List, Set
 from datetime import datetime
@@ -19,170 +21,81 @@ class HostsManager:
         self.hosts_path = Path(HOSTS_FILE_PATH)
         self.backup_dir = Path(HOSTS_BACKUP_PATH)
         self.redirect_ip = REDIRECT_IP
-        self.last_backup_time = None
-        self.last_backup_size = None
         self._ensure_backup_dir()
 
     def _ensure_backup_dir(self) -> None:
         """Ensure backup directory exists."""
-        self.backup_dir.mkdir(exist_ok=True)
-    
+        try:
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError):
+            pass
+
     def _flush_dns_cache(self) -> None:
-        """Flush DNS cache on Windows - optimized single method for performance."""
-        if platform.system() == "Windows":
-            try:
-                # Single fast DNS cache flush - most reliable and fastest
-                subprocess.run(
-                    ["ipconfig", "/flushdns"], 
-                    capture_output=True, 
-                    check=False,  # Don't fail on error
-                    timeout=5,
-                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-                )
-            except Exception:
-                pass  # Silent fail for performance
+        """Flush DNS cache on Windows for real-time blocking effect."""
+        if platform.system() != "Windows":
+            return
+        try:
+            subprocess.run(
+                ["ipconfig", "/flushdns"],
+                capture_output=True,
+                check=False,
+                timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+        except Exception:
+            pass
 
     def is_admin(self) -> bool:
-        """Check if running with administrator privileges.
-        Uses multiple methods to ensure accurate detection.
-        """
+        """Check if running with administrator privileges."""
         if platform.system() != "Windows":
             return False
-        
         try:
             import ctypes
-            
-            # Method 1: Check using shell32.IsUserAnAdmin()
-            try:
-                is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
-                if is_admin:
-                    return True
-            except:
-                pass
-            
-            # Method 2: Try to write to a protected location (hosts file directory)
-            try:
-                test_file = self.hosts_path.parent / "test_write_access.tmp"
-                test_file.write_text("test")
-                test_file.unlink()
-                return True
-            except (PermissionError, IOError, OSError):
-                return False
-                
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
         except Exception:
             return False
 
-    def backup_hosts(self, force: bool = False) -> bool:
-        """Create a backup of the hosts file with automatic cleanup of old backups.
-        
-        Args:
-            force: If True, always create backup. If False, only backup if file size changed
-                  or significant time has passed since last backup (reduces unnecessary backups).
-        """
+    def backup_hosts(self) -> bool:
+        """Create a backup of the hosts file."""
         if not self.hosts_path.exists():
             return False
-
         try:
-            current_size = self.hosts_path.stat().st_size
-            current_time = datetime.now()
-            
-            # Skip backup if not forced and:
-            # 1. File size hasn't changed
-            # 2. Last backup was less than 1 hour ago (optimized to reduce disk usage)
-            if not force and self.last_backup_time and self.last_backup_size:
-                time_diff = (current_time - self.last_backup_time).total_seconds()
-                if self.last_backup_size == current_size and time_diff < 3600:  # 1 hour
-                    return True  # Skip backup - no significant change
-            
-            # Clean old backups first (keep only last 3 to save disk space)
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
+            # Keep only last 3 backups
             self._cleanup_old_backups(max_backups=3)
-            
-            timestamp = current_time.strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_file = self.backup_dir / f"hosts_backup_{timestamp}.txt"
             shutil.copy2(self.hosts_path, backup_file)
-            
-            # Update backup tracking
-            self.last_backup_time = current_time
-            self.last_backup_size = current_size
-            
             return True
-        except (IOError, PermissionError) as e:
-            # Handle permission errors gracefully
-            if isinstance(e, PermissionError):
-                print(f"Warning: Could not create backup (permission denied). Continuing without backup.")
-            elif isinstance(e, OSError) and hasattr(e, 'winerror') and e.winerror == 5:
-                print(f"Warning: Could not create backup (access denied). Continuing without backup.")
-            else:
-                print(f"Error backing up hosts file: {e}")
-            return False
-    
+        except (IOError, PermissionError, OSError):
+            return True  # Continue even if backup fails
+
     def _cleanup_old_backups(self, max_backups: int = 3) -> None:
-        """Clean up old backup files, keeping only the most recent N backups.
-        
-        Args:
-            max_backups: Maximum number of backup files to keep (default: 10)
-        """
+        """Clean up old backup files."""
         try:
             if not self.backup_dir.exists():
                 return
-            
-            # Get all backup files sorted by modification time (newest first)
             backup_files = sorted(
                 self.backup_dir.glob("hosts_backup_*.txt"),
                 key=lambda f: f.stat().st_mtime,
                 reverse=True
             )
-            
-            # Remove old backups if we exceed max_backups
-            if len(backup_files) > max_backups:
-                files_to_delete = backup_files[max_backups:]
-                deleted_count = 0
-                failed_count = 0
-                for old_backup in files_to_delete:
-                    try:
-                        # Try to make file writable first (Windows)
-                        try:
-                            old_backup.chmod(0o666)  # Make writable
-                        except:
-                            pass  # Ignore chmod errors
-                        
-                        old_backup.unlink()
-                        deleted_count += 1
-                    except PermissionError:
-                        # File is locked or access denied - skip silently
-                        failed_count += 1
-                        # Try to delete on next run, don't spam errors
-                    except OSError as e:
-                        # WinError 5 is Access Denied - skip silently
-                        if e.winerror == 5:  # Access Denied
-                            failed_count += 1
-                        else:
-                            # Other OS errors - log once
-                            if failed_count == 0:  # Only log first error to avoid spam
-                                print(f"Error removing old backup {old_backup.name}: {e}")
-                            failed_count += 1
-                    except Exception as e:
-                        # Other errors - log once
-                        if failed_count == 0:  # Only log first error to avoid spam
-                            print(f"Error removing old backup {old_backup.name}: {e}")
-                        failed_count += 1
-                
-                # Silent cleanup - no logging needed
-                        
+            for old_backup in backup_files[max_backups:]:
+                try:
+                    old_backup.unlink()
+                except Exception:
+                    pass
         except Exception:
-            pass  # Silent fail
+            pass
 
     def read_hosts(self) -> List[str]:
         """Read the hosts file and return lines."""
         if not self.hosts_path.exists():
             return []
-
         try:
             with open(self.hosts_path, "r", encoding="utf-8") as f:
                 return f.readlines()
-        except (IOError, PermissionError) as e:
-            # Return empty list instead of raising - allows app to continue
-            print(f"Warning: Cannot read hosts file: {e}")
+        except (IOError, PermissionError):
             return []
 
     def get_blocked_domains(self) -> Set[str]:
@@ -190,257 +103,49 @@ class HostsManager:
         try:
             lines = self.read_hosts()
             blocked = set()
-
             for line in lines:
                 line = line.strip()
-                # Skip comments and empty lines
                 if not line or line.startswith("#"):
                     continue
-
                 parts = line.split()
                 if len(parts) >= 2 and parts[0] == self.redirect_ip:
-                    # Extract domain (could be multiple domains on one line)
                     for part in parts[1:]:
                         if not part.startswith("#"):
                             blocked.add(part.lower())
-
             return blocked
         except Exception:
-            return set()  # Return empty set if we can't read
+            return set()
 
-    def block_domain(self, domain: str, force: bool = False) -> bool:
-        """Block a domain by adding it to hosts file.
-        
-        Args:
-            domain: Domain name to block
-            force: If True, re-add domain even if it appears to be blocked (useful after unblocking)
-        """
-        domain = domain.lower().strip()
-        if not domain:
-            print(f"ERROR: Empty domain provided to block_domain")
-            return False
-
-        # Check if already blocked (skip if force=True)
-        if not force:
-            if domain in self.get_blocked_domains():
-                print(f"Domain {domain} is already blocked")
+    def _make_writable(self) -> bool:
+        """Make hosts file writable, return True if was read-only."""
+        try:
+            if not (self.hosts_path.stat().st_mode & stat.S_IWRITE):
+                self.hosts_path.chmod(stat.S_IREAD | stat.S_IWRITE)
                 return True
+        except Exception:
+            pass
+        return False
 
-        try:
-            print(f"Attempting to block domain: {domain} (force={force})")
-            # Backup before modification
-            backup_success = self.backup_hosts()
-            print(f"Backup {'succeeded' if backup_success else 'failed'}")
-
-            # Read current hosts file
-            lines = self.read_hosts()
-            print(f"Read {len(lines)} lines from hosts file")
-
-            # IMPORTANT: Always use ONE domain per line for reliability
-            # Check if domain entry already exists and remove it first if force
-            entry = f"{self.redirect_ip} {domain}\n"
-            entry_found = False
-            domain_in_file = False
-            
-            # First pass: find and remove existing entries if force
-            # Also clean up any malformed entries (domains concatenated without spaces)
-            if force:
-                new_lines = []
-                for line in lines:
-                    line_stripped = line.strip()
-                    if line_stripped.startswith(self.redirect_ip):
-                        # Check for malformed entries (domains concatenated)
-                        parts = line.split()
-                        if len(parts) >= 2 and parts[0] == self.redirect_ip:
-                            # Extract all domains from this line
-                            domains_in_line = []
-                            for part in parts[1:]:
-                                if part.startswith("#"):
-                                    break
-                                # Check for concatenated domains (long domain names)
-                                if len(part) > 50 or ('.' in part and part.count('.') > 4):
-                                    # Likely malformed - skip this line
-                                    print(f"Removing malformed entry: {line_stripped}")
-                                    domain_in_file = True
-                                    break
-                                domains_in_line.append(part.lower())
-                            else:
-                                # Check if our domain is in this line
-                                if domain in domains_in_line:
-                                    domain_in_file = True
-                                    # Remove domain from this line
-                                    remaining_domains = [d for d in domains_in_line if d != domain]
-                                    if remaining_domains:
-                                        # Add each remaining domain on its own line for clarity
-                                        for rem_domain in remaining_domains:
-                                            new_lines.append(f"{self.redirect_ip} {rem_domain}\n")
-                                    # Don't append original line (we've handled it)
-                                    continue
-                    new_lines.append(line)
-                lines = new_lines
-            else:
-                # Normal pass: check if domain exists (checking for exact match)
-                for i, line in enumerate(lines):
-                    line_stripped = line.strip()
-                    if line_stripped.startswith(self.redirect_ip):
-                        parts = line.split()
-                        if len(parts) >= 2 and parts[0] == self.redirect_ip:
-                            # Check each part individually
-                            for part in parts[1:]:
-                                if part.startswith("#"):
-                                    break
-                                if part.lower() == domain:
-                                    entry_found = True
-                                    domain_in_file = True
-                                    break
-                            if entry_found:
-                                break
-
-            # Add entry if not found or if we forced removal
-            # Always add ONE domain per line for maximum compatibility
-            if not entry_found or force:
-                # Add DeepFocus section comment if not present
-                marker = "# DeepFocus entries"
-                marker_found = any(marker in line for line in lines)
-                
-                if not marker_found:
-                    lines.append(f"\n{marker}\n")
-                # Add entry - ONE domain per line
-                lines.append(entry)
-
-            # Temporarily make file writable if read-only
-            import stat
-            was_readonly = False
+    def _restore_readonly(self, was_readonly: bool) -> None:
+        """Restore read-only attribute if it was set."""
+        if was_readonly:
             try:
-                if not (self.hosts_path.stat().st_mode & stat.S_IWRITE):
-                    was_readonly = True
-                    self.hosts_path.chmod(stat.S_IREAD | stat.S_IWRITE)
-            except:
+                self.hosts_path.chmod(stat.S_IREAD)
+            except Exception:
                 pass
-            
-            # Write back to hosts file
-            with open(self.hosts_path, "w", encoding="utf-8") as f:
-                f.writelines(lines)
-            
-            # Make read-only again if it was read-only
-            if was_readonly:
-                try:
-                    self.hosts_path.chmod(stat.S_IREAD)
-                except:
-                    pass
-
-            # Quick verification - check if domain is in file (don't re-read all domains)
-            try:
-                with open(self.hosts_path, "r", encoding="utf-8") as f:
-                    content = f.read().lower()
-                    if domain in content and f"{self.redirect_ip} {domain}" in content:
-                        # Domain added successfully
-                        return True
-            except:
-                pass
-
-            # If quick check fails, do full verification
-            blocked_domains = self.get_blocked_domains()
-            return domain in blocked_domains
-
-        except PermissionError:
-            raise IOError("Cannot modify hosts file: Permission denied. Please run as administrator.")
-        except IOError:
-            raise
-        except Exception as e:
-            raise IOError(f"Cannot modify hosts file: {e}. Please run as administrator.")
-
-    def unblock_domain(self, domain: str) -> bool:
-        """Unblock a domain by removing it from hosts file."""
-        domain = domain.lower().strip()
-        if not domain:
-            return False
-
-        try:
-            # Backup before modification
-            self.backup_hosts()
-
-            # Read current hosts file
-            lines = self.read_hosts()
-            modified = False
-            new_lines = []
-
-            for line in lines:
-                # Skip lines containing this domain with redirect IP
-                if line.strip().startswith(self.redirect_ip):
-                    # Check if this line contains the domain
-                    parts = line.split()
-                    if len(parts) >= 2 and parts[0] == self.redirect_ip:
-                        domains_in_line = [d.lower() for d in parts[1:] if not d.startswith("#")]
-                        if domain in domains_in_line:
-                            # Remove domain from this line
-                            remaining_domains = [d for d in domains_in_line if d != domain]
-                            if remaining_domains:
-                                # Keep line with remaining domains
-                                new_line = f"{self.redirect_ip} {' '.join(remaining_domains)}\n"
-                                new_lines.append(new_line)
-                            modified = True
-                            continue
-
-                new_lines.append(line)
-
-            # Write back if modified
-            if modified:
-                # Temporarily make file writable if read-only
-                import stat
-                was_readonly = False
-                try:
-                    if not (self.hosts_path.stat().st_mode & stat.S_IWRITE):
-                        was_readonly = True
-                        self.hosts_path.chmod(stat.S_IREAD | stat.S_IWRITE)
-                except:
-                    pass
-                
-                with open(self.hosts_path, "w", encoding="utf-8") as f:
-                    f.writelines(new_lines)
-                
-                # Make read-only again if it was read-only
-                if was_readonly:
-                    try:
-                        self.hosts_path.chmod(stat.S_IREAD)
-                    except:
-                        pass
-                
-                # Flush DNS cache
-                self._flush_dns_cache()
-
-            return modified
-
-        except (IOError, PermissionError) as e:
-            raise IOError(f"Cannot modify hosts file: {e}. Please run as administrator.")
 
     def block_domains(self, domains: List[str], force: bool = False) -> bool:
-        """Block multiple domains efficiently - batch write for better performance.
+        """
+        Block multiple domains efficiently with proper formatting.
+        Each domain gets its own line: 127.0.0.1 domain.com
         
         Args:
             domains: List of domain names to block
-            force: If True, re-add domains even if they appear blocked (useful after unblocking)
+            force: If True, re-add domains even if they appear blocked
         """
         if not domains:
             return True
-        
-        # Clean up malformed entries first if force=True
-        if force:
-            self._cleanup_malformed_entries()
-        
-        # Sanitize and prepare domains
-        domains_to_block = []
-        blocked_domains = self.get_blocked_domains() if not force else set()
-        
-        for domain in domains:
-            domain = domain.strip().lower()
-            if domain and domain not in blocked_domains:
-                domains_to_block.append(domain)
-        
-        if not domains_to_block and not force:
-            return True
-        
-        # Batch write all domains at once for performance
+
         try:
             # Backup before modification
             self.backup_hosts()
@@ -448,209 +153,167 @@ class HostsManager:
             # Read current hosts file
             lines = self.read_hosts()
             
-            # Remove existing entries if force=True
-            if force:
-                new_lines = []
-                blocked_set = set(domains_to_block)
-                for line in lines:
-                    line_stripped = line.strip()
-                    if line_stripped.startswith(self.redirect_ip):
-                        parts = line.split()
-                        if len(parts) >= 2 and parts[0] == self.redirect_ip:
-                            # Check for malformed or existing domains
-                            domains_in_line = []
-                            is_malformed = False
-                            for part in parts[1:]:
-                                if part.startswith("#"):
-                                    break
-                                part_lower = part.lower()
-                                # Check for malformed entries
-                                if len(part_lower) > 50 or part_lower.count('.') > 6:
-                                    is_malformed = True
-                                    break
-                                if part_lower not in blocked_set:
-                                    domains_in_line.append(part_lower)
-                            
-                            if is_malformed or any(d in blocked_set for d in domains_in_line):
-                                # Skip this line - will be re-added properly
-                                continue
-                            elif domains_in_line:
-                                # Keep remaining domains
-                                new_lines.append(f"{self.redirect_ip} {' '.join(domains_in_line)}\n")
-                                continue
-                    new_lines.append(line)
-                lines = new_lines
+            # Prepare domains to block (lowercase, stripped)
+            domains_to_block = set(d.strip().lower() for d in domains if d.strip())
             
-            # Add DeepFocus marker if not present
+            if not domains_to_block:
+                return True
+            
+            # Get existing blocked domains
+            existing_blocked = self.get_blocked_domains() if not force else set()
+            
+            # Filter out already blocked domains (unless force)
+            if not force:
+                domains_to_block = domains_to_block - existing_blocked
+                if not domains_to_block:
+                    return True
+            
+            # Build new file content
+            new_lines = []
             marker = "# DeepFocus entries"
-            marker_found = any(marker in line for line in lines)
+            marker_found = False
+            
+            for line in lines:
+                line_stripped = line.strip()
+                
+                # Check for our marker
+                if marker in line:
+                    marker_found = True
+                    new_lines.append(line)
+                    continue
+                
+                # Check for DeepFocus blocked entries
+                if line_stripped.startswith(self.redirect_ip):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        # Extract domain from this line
+                        domain_in_line = parts[1].lower() if len(parts) > 1 else ""
+                        
+                        # If force mode, remove entries we're about to add
+                        if force and domain_in_line in domains_to_block:
+                            continue  # Skip - will re-add later
+                        
+                        # Check for malformed entries (very long or concatenated)
+                        if len(domain_in_line) > 60 or domain_in_line.count('.') > 5:
+                            continue  # Skip malformed entry
+                
+                new_lines.append(line)
+            
+            # Ensure file ends with newline
+            if new_lines and not new_lines[-1].endswith('\n'):
+                new_lines[-1] += '\n'
+            
+            # Add marker if not present
             if not marker_found:
-                lines.append(f"\n{marker}\n")
+                new_lines.append(f"\n{marker}\n")
             
-            # Add all domains at once (one per line for reliability)
-            for domain in domains_to_block:
-                lines.append(f"{self.redirect_ip} {domain}\n")
+            # Add each domain on its own line with explicit newline
+            for domain in sorted(domains_to_block):
+                entry = f"{self.redirect_ip} {domain}\n"
+                new_lines.append(entry)
             
-            # Write all at once - ensure we have admin privileges first
-            import stat
-            import ctypes
+            # Write to hosts file
+            was_readonly = self._make_writable()
             
-            # Verify admin privileges before attempting write
-            try:
-                is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
-                if not is_admin:
-                    raise PermissionError("Administrator privileges required to modify hosts file. Please run the application as Administrator.")
-            except (AttributeError, OSError):
-                # Not Windows or can't check - try anyway
-                pass
-            
-            was_readonly = False
-            try:
-                # Check and remove read-only attribute if present
-                file_stat = self.hosts_path.stat()
-                if not (file_stat.st_mode & stat.S_IWRITE):
-                    was_readonly = True
-                    try:
-                        # Remove read-only attribute
-                        self.hosts_path.chmod(stat.S_IREAD | stat.S_IWRITE)
-                    except (PermissionError, OSError) as chmod_err:
-                        # If chmod fails, try using Windows API
-                        try:
-                            import win32api
-                            import win32con
-                            win32api.SetFileAttributes(str(self.hosts_path), win32con.FILE_ATTRIBUTE_NORMAL)
-                        except (ImportError, OSError):
-                            # If win32api not available or fails, raise the original error
-                            raise PermissionError(
-                                f"Unable to modify hosts file permissions. Error: {chmod_err}. "
-                                "Please ensure the application is running as Administrator."
-                            )
-            except PermissionError:
-                raise
-            except Exception:
-                # Non-critical permission error - continue silently
-                pass
-            
-            # Attempt to write the file
             try:
                 with open(self.hosts_path, "w", encoding="utf-8") as f:
-                    f.writelines(lines)
-            except PermissionError as e:
-                # Provide helpful error message
-                raise PermissionError(
-                    f"Permission denied: Cannot write to hosts file. "
-                    f"Please ensure:\n"
-                    f"1. The application is running as Administrator\n"
-                    f"2. No antivirus is blocking hosts file modifications\n"
-                    f"3. The hosts file is not locked by another process\n"
-                    f"Original error: {e}"
-                )
+                    f.writelines(new_lines)
+            finally:
+                self._restore_readonly(was_readonly)
             
-            # Restore read-only attribute if it was set
-            if was_readonly:
-                try:
-                    self.hosts_path.chmod(stat.S_IREAD)
-                except (PermissionError, OSError):
-                    # Non-critical - hosts file is readable
-                    pass
-            
-            # Verify blocking (sample check - not all domains)
-            # Flush DNS cache immediately after blocking for real-time effect
+            # Flush DNS cache for immediate effect
             self._flush_dns_cache()
             
             return True
             
-        except Exception:
-            return False
-    
-    def _cleanup_malformed_entries(self) -> None:
-        """Clean up malformed domain entries in hosts file - ensure ONE domain per line."""
+        except PermissionError as e:
+            raise PermissionError(
+                f"Cannot write to hosts file. Please run as Administrator. Error: {e}"
+            )
+        except Exception as e:
+            raise IOError(f"Failed to block domains: {e}")
+
+    def unblock_domains(self, domains: List[str]) -> bool:
+        """
+        Unblock multiple domains efficiently.
+        
+        Args:
+            domains: List of domain names to unblock
+        """
+        if not domains:
+            return True
+
         try:
+            # Backup before modification
+            self.backup_hosts()
+            
+            # Read current hosts file
             lines = self.read_hosts()
+            
+            # Prepare domains to unblock (lowercase, stripped)
+            domains_to_unblock = set(d.strip().lower() for d in domains if d.strip())
+            
+            if not domains_to_unblock:
+                return True
+            
+            # Build new file content, removing specified domains
             new_lines = []
             modified = False
-            cleaned_domains = []
             
             for line in lines:
                 line_stripped = line.strip()
-                # Check for DeepFocus entries or any redirect entries
+                
+                # Check for DeepFocus blocked entries
                 if line_stripped.startswith(self.redirect_ip):
                     parts = line.split()
-                    if len(parts) >= 2 and parts[0] == self.redirect_ip:
-                        # Extract domain part (everything after IP, before #)
-                        domain_part = ' '.join(parts[1:]).split('#')[0].strip()
+                    if len(parts) >= 2:
+                        domain_in_line = parts[1].lower() if len(parts) > 1 else ""
                         
-                        # Check for malformed entries:
-                        # 1. Very long domain names (>50 chars)
-                        # 2. Multiple www. patterns (indicates concatenation)
-                        # 3. Multiple .com/.net/.org patterns
-                        is_malformed = False
-                        if len(domain_part) > 50:
-                            is_malformed = True
-                        elif domain_part.count('www.') > 1:
-                            is_malformed = True
-                        elif domain_part.count('.com') > 1 or domain_part.count('.net') > 1 or domain_part.count('.app') > 1:
-                            is_malformed = True
-                        elif domain_part.count('.') > 6:  # Too many dots indicates concatenation
-                            is_malformed = True
-                        
-                        if is_malformed:
-                            # Silent removal of malformed entries
+                        if domain_in_line in domains_to_unblock:
                             modified = True
-                            cleaned_domains.append(domain_part)
-                            continue  # Skip this malformed entry
-                        
-                        # Valid entry - keep it as is
-                        new_lines.append(line)
-                    else:
-                        new_lines.append(line)
-                else:
-                    new_lines.append(line)
-            
-            if modified:
-                # Write cleaned hosts file
-                import stat
-                was_readonly = False
-                try:
-                    if not (self.hosts_path.stat().st_mode & stat.S_IWRITE):
-                        was_readonly = True
-                        self.hosts_path.chmod(stat.S_IREAD | stat.S_IWRITE)
-                except:
-                    pass
+                            continue  # Skip this line (remove the block)
                 
+                new_lines.append(line)
+            
+            if not modified:
+                return True  # Nothing to change
+            
+            # Write to hosts file
+            was_readonly = self._make_writable()
+            
+            try:
                 with open(self.hosts_path, "w", encoding="utf-8") as f:
                     f.writelines(new_lines)
-                
-                if was_readonly:
-                    try:
-                        self.hosts_path.chmod(stat.S_IREAD)
-                    except:
-                        pass
-                
-                print(f"Cleaned up {len(cleaned_domains)} malformed entries in hosts file")
-                if cleaned_domains:
-                    print(f"Removed malformed domains: {', '.join(cleaned_domains[:3])}...")
+            finally:
+                self._restore_readonly(was_readonly)
+            
+            # Flush DNS cache for immediate effect
+            self._flush_dns_cache()
+            
+            return True
+            
+        except PermissionError as e:
+            raise PermissionError(
+                f"Cannot write to hosts file. Please run as Administrator. Error: {e}"
+            )
         except Exception as e:
-            print(f"Error cleaning up malformed entries: {e}")
-            import traceback
-            traceback.print_exc()
+            raise IOError(f"Failed to unblock domains: {e}")
 
-    def unblock_domains(self, domains: List[str]) -> bool:
-        """Unblock multiple domains."""
-        success = True
-        for domain in domains:
-            if not self.unblock_domain(domain):
-                success = False
-        return success
+    def block_domain(self, domain: str, force: bool = False) -> bool:
+        """Block a single domain."""
+        return self.block_domains([domain], force=force)
+
+    def unblock_domain(self, domain: str) -> bool:
+        """Unblock a single domain."""
+        return self.unblock_domains([domain])
 
     def restore_backup(self, backup_file: Path) -> bool:
         """Restore hosts file from a backup."""
         if not backup_file.exists():
             return False
-
         try:
             shutil.copy2(backup_file, self.hosts_path)
+            self._flush_dns_cache()
             return True
-        except (IOError, PermissionError) as e:
-            print(f"Error restoring backup: {e}")
+        except (IOError, PermissionError):
             return False

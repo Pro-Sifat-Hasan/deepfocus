@@ -47,12 +47,14 @@ class Settings:
         # Ensure directory exists
         try:
             self.settings_file.parent.mkdir(parents=True, exist_ok=True)
-        except (PermissionError, OSError) as e:
-            print(f"Warning: Could not create settings directory: {e}")
-            # Fallback to local directory
-            from .constants import SETTINGS_FILE
-            self.settings_file = Path(SETTINGS_FILE)
-            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError):
+            # Fallback to local directory silently
+            try:
+                from .constants import SETTINGS_FILE
+                self.settings_file = Path(SETTINGS_FILE)
+                self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass  # Last resort - will fail on save if can't create
         
         self._settings: Dict[str, Any] = {}
         self.load()
@@ -97,12 +99,16 @@ class Settings:
     def save(self) -> None:
         """Save settings to file."""
         try:
-            # Ensure directory exists
-            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+            # Ensure directory exists (might fail silently)
+            try:
+                self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+            except (PermissionError, OSError):
+                pass  # Directory creation failed - continue to try saving anyway
             with open(self.settings_file, "w", encoding="utf-8") as f:
                 json.dump(self._settings, f, indent=2, ensure_ascii=False)
-        except IOError as e:
-            print(f"Error saving settings: {e}")
+        except (IOError, PermissionError, OSError):
+            # Settings save failed - non-critical, continue without saving
+            pass
 
     def _default_settings(self) -> Dict[str, Any]:
         """Return default settings dictionary."""

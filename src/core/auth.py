@@ -96,8 +96,8 @@ class Auth:
             return result
         except Exception as e:
             # Fallback: if all else fails, try direct comparison with default
-            print(f"Error verifying password: {e}")
-            return password == DEFAULT_PASSWORD
+            # Return False on error, don't use fallback (security)
+            return False
 
     def change_main_password(self, old_password: str, new_password: str) -> bool:
         """Change main password."""
