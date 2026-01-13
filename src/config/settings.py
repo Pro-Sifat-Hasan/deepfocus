@@ -1,19 +1,32 @@
 """
 Settings management for user preferences.
+Uses Flet's storage API (FLET_APP_STORAGE_DATA) for persistence.
 """
 import json
 import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from .constants import SETTINGS_FILE, DEFAULT_PASSWORD
+from .constants import DEFAULT_PASSWORD
 
 
 class Settings:
     """Manages application settings and user preferences."""
 
     def __init__(self):
-        self.settings_file = Path(SETTINGS_FILE)
+        # Use Flet's storage API for persistent data
+        app_data_path = os.getenv("FLET_APP_STORAGE_DATA")
+        if app_data_path:
+            # Use Flet's designated data directory
+            self.settings_file = Path(app_data_path) / "settings.json"
+        else:
+            # Fallback to local app data directory
+            from .constants import SETTINGS_FILE
+            self.settings_file = Path(SETTINGS_FILE)
+        
+        # Ensure directory exists
+        self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+        
         self._settings: Dict[str, Any] = {}
         self.load()
 
@@ -31,9 +44,11 @@ class Settings:
                     ]}
                     self.save()
                 else:
-                    # Reset any False to True for platforms
+                    # Ensure all platforms have a value (default to True only if not set)
+                    # DO NOT override explicit False values - respect user's unblock choices
                     for platform in ["facebook", "instagram", "linkedin", "twitter", "youtube", "tiktok", "reddit", "snapchat"]:
                         if platform not in self._settings["platform_blocked"]:
+                            # Only set default if platform key doesn't exist
                             self._settings["platform_blocked"][platform] = True
                     # Ensure adult content blocking ALWAYS defaults to True
                     if "adult_content_blocked" not in self._settings or not self._settings.get("adult_content_blocked", True):
@@ -55,6 +70,8 @@ class Settings:
     def save(self) -> None:
         """Save settings to file."""
         try:
+            # Ensure directory exists
+            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.settings_file, "w", encoding="utf-8") as f:
                 json.dump(self._settings, f, indent=2, ensure_ascii=False)
         except IOError as e:

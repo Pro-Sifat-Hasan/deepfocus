@@ -52,13 +52,13 @@ class SystemIntegration:
             if enabled:
                 # Check if running as exe (frozen) or script
                 if getattr(sys, 'frozen', False):
-                    # For exe: use PowerShell to launch with elevation (admin privileges)
-                    # This ensures the app starts with admin rights on boot
-                    ps_command = f'powershell -WindowStyle Hidden -Command "Start-Process \'{app_path}\' -Verb RunAs"'
-                    winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, ps_command)
+                    # For exe: launch with --minimized flag to start in tray
+                    # Windows will request elevation automatically if exe requires admin
+                    app_with_args = f'"{app_path}" --minimized'
+                    winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, app_with_args)
                 else:
-                    # For script: direct path
-                    winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, app_path)
+                    # For script: direct path with minimized flag
+                    winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, f'"{app_path}" --minimized')
             else:
                 try:
                     winreg.DeleteValue(key, app_name)

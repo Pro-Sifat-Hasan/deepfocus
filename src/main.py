@@ -3,17 +3,196 @@ DeepFocus - Main application entry point.
 """
 import flet as ft
 import sys
+import os
 import asyncio
 from pathlib import Path
 
-from .ui.login_page import create_login_page
-from .ui.main_page import MainPage
-from .ui.custom_domain_page import CustomDomainPage
-from .ui.settings_page import SettingsPage
-from .utils.language import lang
-from .utils.system_integration import system_integration
-from .core.blocker import Blocker
-from .config.colors import PRIMARY, WARNING, ERROR
+# Fix imports for both development and packaged modes
+# When Flet packages the app, code is extracted to AppData/.../flet/app/
+# We need to ensure the package structure is recognized correctly
+
+# Get the directory containing this file
+_current_file = Path(__file__).resolve()
+_current_dir = _current_file.parent
+
+# In packaged mode, files are in flet/app/ directory
+# We need to make Python recognize this as a package structure
+# Add parent directory to sys.path so we can import as a package
+_parent_dir = _current_dir.parent
+if str(_parent_dir) not in sys.path:
+    sys.path.insert(0, str(_parent_dir))
+
+# Also add current directory
+if str(_current_dir) not in sys.path:
+    sys.path.insert(0, str(_current_dir))
+
+# Create a fake package structure for relative imports to work
+# When Flet packages, files are in flet/app/, but we need them to be recognized as 'app' package
+# Set __package__ and __name__ correctly
+if not hasattr(sys.modules.get('__main__', None), '__package__') or sys.modules['__main__'].__package__ is None:
+    # Determine package name from path
+    # If in flet/app/, package should be 'app'
+    # If in src/, package should be 'src'
+    if 'flet' in str(_current_dir) and _current_dir.name == 'app':
+        # Packaged mode: files are in flet/app/
+        _package_name = 'app'
+    elif _current_dir.name == 'src':
+        # Development mode: files are in src/
+        _package_name = 'src'
+    else:
+        # Try to detect from path
+        parts = _current_dir.parts
+        if 'app' in parts:
+            _package_name = 'app'
+        elif 'src' in parts:
+            _package_name = 'src'
+        else:
+            _package_name = None
+    
+    if _package_name:
+        # Set the package for this module
+        import types
+        if '__main__' in sys.modules:
+            main_module = sys.modules['__main__']
+            main_module.__package__ = _package_name
+            main_module.__name__ = f"{_package_name}.main"
+
+# Try relative imports first (for development: python -m src.main)
+try:
+    from .ui.login_page import create_login_page
+    from .ui.main_page import MainPage
+    from .ui.custom_domain_page import CustomDomainPage
+    from .ui.settings_page import SettingsPage
+    from .utils.language import lang
+    from .utils.system_integration import system_integration
+    from .core.blocker import Blocker
+    from .config.colors import PRIMARY, WARNING, ERROR
+    from .config.settings import settings
+except (ImportError, ValueError, SystemError):
+    # Fallback: Use absolute imports with proper package setup
+    # We'll import using the package name we detected
+    try:
+        if _package_name == 'app':
+            # Packaged mode: import from app package
+            from app.ui.login_page import create_login_page
+            from app.ui.main_page import MainPage
+            from app.ui.custom_domain_page import CustomDomainPage
+            from app.ui.settings_page import SettingsPage
+            from app.utils.language import lang
+            from app.utils.system_integration import system_integration
+            from app.core.blocker import Blocker
+            from app.config.colors import PRIMARY, WARNING, ERROR
+            from app.config.settings import settings
+        else:
+            # Development mode: import from src package
+            from src.ui.login_page import create_login_page
+            from src.ui.main_page import MainPage
+            from src.ui.custom_domain_page import CustomDomainPage
+            from src.ui.settings_page import SettingsPage
+            from src.utils.language import lang
+            from src.utils.system_integration import system_integration
+            from src.core.blocker import Blocker
+            from src.config.colors import PRIMARY, WARNING, ERROR
+            from src.config.settings import settings
+    except ImportError:
+        # Last resort: dynamically import and patch all modules with proper package structure
+        import importlib.util
+        import types
+        
+        # Determine package name for submodules
+        _subpackage = 'app' if 'flet' in str(_current_dir) else 'src'
+        
+        # Create fake package modules in sys.modules so relative imports work
+        def _create_package_modules():
+            """Create empty package modules in sys.modules."""
+            packages = [
+                _subpackage,
+                f"{_subpackage}.config",
+                f"{_subpackage}.utils",
+                f"{_subpackage}.core",
+                f"{_subpackage}.ui",
+                f"{_subpackage}.ui.components",
+            ]
+            for pkg_name in packages:
+                if pkg_name not in sys.modules:
+                    pkg_module = types.ModuleType(pkg_name)
+                    pkg_module.__package__ = pkg_name
+                    pkg_module.__name__ = pkg_name
+                    pkg_module.__path__ = []
+                    sys.modules[pkg_name] = pkg_module
+        
+        def _import_and_patch_module(module_path, full_module_name, package_name):
+            """Import a module and patch it so relative imports work."""
+            file_path = _current_dir / module_path
+            if not file_path.exists():
+                raise ImportError(f"Module file not found: {file_path}")
+            
+            # Create parent packages first
+            _create_package_modules()
+            
+            spec = importlib.util.spec_from_file_location(full_module_name, file_path)
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                # CRITICAL: Set __package__ BEFORE executing module
+                # This allows relative imports to work
+                module.__package__ = package_name
+                module.__name__ = full_module_name
+                # Add to sys.modules BEFORE exec so nested imports can find it
+                sys.modules[full_module_name] = module
+                # Execute the module
+                spec.loader.exec_module(module)
+                return module
+            raise ImportError(f"Could not load module from {file_path}")
+        
+        try:
+            # Import dependencies first (in dependency order)
+            # Config modules (no dependencies on other custom modules)
+            _import_and_patch_module("config/constants.py", f"{_subpackage}.config.constants", f"{_subpackage}.config")
+            _import_and_patch_module("config/colors.py", f"{_subpackage}.config.colors", f"{_subpackage}.config")
+            _import_and_patch_module("config/settings.py", f"{_subpackage}.config.settings", f"{_subpackage}.config")
+            
+            # Core modules (depend on config)
+            _import_and_patch_module("core/hosts_manager.py", f"{_subpackage}.core.hosts_manager", f"{_subpackage}.core")
+            _import_and_patch_module("core/auth.py", f"{_subpackage}.core.auth", f"{_subpackage}.core")
+            _import_and_patch_module("core/blocker.py", f"{_subpackage}.core.blocker", f"{_subpackage}.core")
+            _import_and_patch_module("core/protection_monitor.py", f"{_subpackage}.core.protection_monitor", f"{_subpackage}.core")
+            
+            # Utils modules
+            _import_and_patch_module("utils/validators.py", f"{_subpackage}.utils.validators", f"{_subpackage}.utils")
+            _import_and_patch_module("utils/language.py", f"{_subpackage}.utils.language", f"{_subpackage}.utils")
+            _import_and_patch_module("utils/system_integration.py", f"{_subpackage}.utils.system_integration", f"{_subpackage}.utils")
+            
+            # UI components (depend on utils and config)
+            _import_and_patch_module("ui/components/footer.py", f"{_subpackage}.ui.components.footer", f"{_subpackage}.ui.components")
+            _import_and_patch_module("ui/components/platform_card.py", f"{_subpackage}.ui.components.platform_card", f"{_subpackage}.ui.components")
+            
+            # UI pages (depend on everything above)
+            login_page_mod = _import_and_patch_module("ui/login_page.py", f"{_subpackage}.ui.login_page", f"{_subpackage}.ui")
+            create_login_page = login_page_mod.create_login_page
+            
+            main_page_mod = _import_and_patch_module("ui/main_page.py", f"{_subpackage}.ui.main_page", f"{_subpackage}.ui")
+            MainPage = main_page_mod.MainPage
+            
+            custom_page_mod = _import_and_patch_module("ui/custom_domain_page.py", f"{_subpackage}.ui.custom_domain_page", f"{_subpackage}.ui")
+            CustomDomainPage = custom_page_mod.CustomDomainPage
+            
+            settings_page_mod = _import_and_patch_module("ui/settings_page.py", f"{_subpackage}.ui.settings_page", f"{_subpackage}.ui")
+            SettingsPage = settings_page_mod.SettingsPage
+            
+            # Get required objects from loaded modules
+            lang = sys.modules[f"{_subpackage}.utils.language"].lang
+            system_integration = sys.modules[f"{_subpackage}.utils.system_integration"].system_integration
+            Blocker = sys.modules[f"{_subpackage}.core.blocker"].Blocker
+            colors_mod = sys.modules[f"{_subpackage}.config.colors"]
+            PRIMARY = colors_mod.PRIMARY
+            WARNING = colors_mod.WARNING
+            ERROR = colors_mod.ERROR
+            settings = sys.modules[f"{_subpackage}.config.settings"].settings
+        except Exception as e:
+            import traceback
+            error_msg = f"Critical import error: {e}\n{traceback.format_exc()}"
+            print(error_msg)
+            raise ImportError(f"Failed to import required modules. Original error: {e}")
 
 
 class App: 
@@ -33,17 +212,21 @@ class App:
         # Prevent window from closing - app always runs  
         self.page.window.prevent_close = True   
            
-        # Handle window events - minimize instead of close
+        # Handle window close event - minimize to tray instead of closing
         def on_window_event(e):
             if hasattr(e, 'data') and e.data == "close":
-                # Hide window instead of closing - app keeps running
+                # Hide window instead of closing - app keeps running in tray
                 self.page.window.visible = False
                 self.page.update()
+                print("Window hidden - app running in system tray")
         
         try:
             self.page.window.on_event = on_window_event
         except:
             pass  # Fallback if event handler not available
+        
+        # Store reference to app instance for tray callbacks
+        self.app_instance = self
           
         # Set theme
         self.page.theme_mode = ft.ThemeMode.SYSTEM 
@@ -54,7 +237,7 @@ class App:
         }
         
         # Set theme with primary color (Niagara)
-        from .config.colors import PRIMARY 
+        # PRIMARY is already imported at top 
         self.page.theme = ft.Theme(
             font_family="Segoe UI", 
             color_scheme_seed=PRIMARY,
@@ -83,7 +266,20 @@ class App:
                 self._show_admin_warning()
             else:
                 # Start advanced protection if admin
-                from .core.protection_monitor import protection_monitor
+                try:
+                    from .core.protection_monitor import protection_monitor
+                except ImportError:
+                    # Already imported in fallback, get from sys.modules
+                    _pkg = 'app' if 'flet' in str(Path(__file__).parent) else 'src'
+                    prot_mon_mod = sys.modules.get(f"{_pkg}.core.protection_monitor")
+                    if prot_mon_mod and hasattr(prot_mon_mod, 'protection_monitor'):
+                        protection_monitor = prot_mon_mod.protection_monitor
+                    else:
+                        # Import protection_monitor now
+                        try:
+                            from src.core.protection_monitor import protection_monitor
+                        except ImportError:
+                            from app.core.protection_monitor import protection_monitor
                 protection_monitor.start()
                 
                 # Start DNS-level blocking (optional, can be enabled via settings)
@@ -100,18 +296,39 @@ class App:
                 # Setup system tray for background operation
                 try:
                     setup_system_tray(self)
+                    print("System tray icon created - app will minimize to tray when closed")
                 except Exception as e:
                     print(f"Error setting up system tray: {e}")
         except Exception as e:
             print(f"Error checking admin privileges: {e}")
         
         # Always enable auto-start - app should always run
-        from .config.settings import settings
-        from .utils.system_integration import system_integration
-        app_path = system_integration.get_app_path()
-        system_integration.set_auto_start(True, app_path)
-        if not settings.is_auto_start():
-            settings.set_auto_start(True)
+        # Ensure settings and system_integration are available
+        try:
+            # Try to use the imported variables (may not be in function scope)
+            _ = system_integration
+            _ = settings
+        except NameError:
+            # Not available, import them
+            try:
+                from .config.settings import settings
+                from .utils.system_integration import system_integration
+            except ImportError:
+                try:
+                    from src.config.settings import settings
+                    from src.utils.system_integration import system_integration
+                except ImportError:
+                    from app.config.settings import settings
+                    from app.utils.system_integration import system_integration
+        
+        # Now use them safely
+        try:
+            app_path = system_integration.get_app_path()
+            system_integration.set_auto_start(True, app_path)  
+            if not settings.is_auto_start(): 
+                settings.set_auto_start(True)
+        except Exception as e:
+            print(f"Warning: Could not set auto-start: {e}")
 
     def _show_login_page(self) -> None:
         """Show login page."""
@@ -160,8 +377,27 @@ class App:
                 blocker.sync_with_hosts_file()
                 
                 # Force apply adult content and casino/gambling blocking
-                from .config.settings import settings
-                from .config.constants import ADULT_CONTENT_DOMAINS, CASINO_GAMBLING_DOMAINS
+                # settings should already be imported at top - use try/except to avoid scope issues
+                try:
+                    # Try to use the imported settings
+                    _ = settings.is_adult_content_blocked
+                except NameError:
+                    # Not available, import it
+                    try:
+                        from .config.settings import settings
+                    except ImportError:
+                        try:
+                            from src.config.settings import settings
+                        except ImportError:
+                            from app.config.settings import settings
+                
+                try:
+                    from .config.constants import ADULT_CONTENT_DOMAINS, CASINO_GAMBLING_DOMAINS
+                except ImportError:
+                    try:
+                        from src.config.constants import ADULT_CONTENT_DOMAINS, CASINO_GAMBLING_DOMAINS
+                    except ImportError:
+                        from app.config.constants import ADULT_CONTENT_DOMAINS, CASINO_GAMBLING_DOMAINS
                 
                 # Block adult content if enabled - use blocker method for proper cleanup
                 if settings.is_adult_content_blocked():
@@ -323,6 +559,11 @@ class App:
 async def main(page: ft.Page):
     """Main entry point for Flet app."""
     try:
+        # Check if app should start minimized (for auto-start)
+        # Check command line arguments or environment variable
+        import sys
+        start_minimized = "--minimized" in sys.argv or os.getenv("DEEPFOCUS_MINIMIZED", "").lower() == "true"
+        
         # Initialize app (content will be added)
         app = App(page)
         
@@ -333,9 +574,15 @@ async def main(page: ft.Page):
         # Center window (async)
         await page.window.center()
         
-        # Make window visible now that content is ready
-        page.window.visible = True
-        page.update()
+        # Show window unless starting minimized
+        if not start_minimized:
+            page.window.visible = True
+            page.update()
+            print("App started - window visible")
+        else:
+            page.window.visible = False
+            page.update()
+            print("App started - running in system tray (minimized)")
         
     except Exception as e:
         print(f"Fatal error initializing app: {e}")
@@ -387,22 +634,59 @@ def setup_system_tray(app_instance):
         except:
             pass
 
+    # Ensure system_integration is available
+    try:
+        _ = system_integration
+    except NameError:
+        # Not available, import it
+        try:
+            from .utils.system_integration import system_integration
+        except ImportError:
+            try:
+                from src.utils.system_integration import system_integration
+            except ImportError:
+                from app.utils.system_integration import system_integration
+
     icon_path = Path(__file__).parent / "assets" / "icon.ico"
     
-    system_integration.create_system_tray(
-        icon_path=str(icon_path) if icon_path.exists() else None,
-        show_callback=show_window,
-        quit_callback=quit_app,
-        menu_title="DeepFocus",
-    )
+    try:
+        system_integration.create_system_tray(
+            icon_path=str(icon_path) if icon_path.exists() else None,
+            show_callback=show_window,
+            quit_callback=quit_app,
+            menu_title="DeepFocus",
+        )
+    except Exception as e:
+        print(f"Error setting up system tray: {e}")
 
 
 if __name__ == "__main__":
     # Always enable auto-start - app should always run
-    from .config.settings import settings
-    app_path = system_integration.get_app_path()
-    system_integration.set_auto_start(True, app_path)
-    settings.set_auto_start(True)
+    # Ensure settings and system_integration are available
+    try:
+        # Try to use the imported variables
+        _ = system_integration
+        _ = settings
+    except NameError:
+        # Not available, import them
+        try:
+            from .config.settings import settings
+            from .utils.system_integration import system_integration
+        except ImportError:
+            try:
+                from src.config.settings import settings
+                from src.utils.system_integration import system_integration
+            except ImportError:
+                from app.config.settings import settings
+                from app.utils.system_integration import system_integration
+    
+    # Now use them safely
+    try:
+        app_path = system_integration.get_app_path()
+        system_integration.set_auto_start(True, app_path)
+        settings.set_auto_start(True)
+    except Exception as e:
+        print(f"Warning: Could not set auto-start: {e}")
     
     # Run the Flet app
     # Note: When using 'flet run -m src.main', Flet CLI calls ft.run() automatically

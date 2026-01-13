@@ -91,7 +91,13 @@ class HostsManager:
             
             return True
         except (IOError, PermissionError) as e:
-            print(f"Error backing up hosts file: {e}")
+            # Handle permission errors gracefully
+            if isinstance(e, PermissionError):
+                print(f"Warning: Could not create backup (permission denied). Continuing without backup.")
+            elif isinstance(e, OSError) and hasattr(e, 'winerror') and e.winerror == 5:
+                print(f"Warning: Could not create backup (access denied). Continuing without backup.")
+            else:
+                print(f"Error backing up hosts file: {e}")
             return False
     
     def _cleanup_old_backups(self, max_backups: int = 10) -> None:
@@ -114,12 +120,43 @@ class HostsManager:
             # Remove old backups if we exceed max_backups
             if len(backup_files) > max_backups:
                 files_to_delete = backup_files[max_backups:]
+                deleted_count = 0
+                failed_count = 0
                 for old_backup in files_to_delete:
                     try:
+                        # Try to make file writable first (Windows)
+                        try:
+                            old_backup.chmod(0o666)  # Make writable
+                        except:
+                            pass  # Ignore chmod errors
+                        
                         old_backup.unlink()
-                        print(f"Removed old backup: {old_backup.name}")
+                        deleted_count += 1
+                    except PermissionError:
+                        # File is locked or access denied - skip silently
+                        failed_count += 1
+                        # Try to delete on next run, don't spam errors
+                    except OSError as e:
+                        # WinError 5 is Access Denied - skip silently
+                        if e.winerror == 5:  # Access Denied
+                            failed_count += 1
+                        else:
+                            # Other OS errors - log once
+                            if failed_count == 0:  # Only log first error to avoid spam
+                                print(f"Error removing old backup {old_backup.name}: {e}")
+                            failed_count += 1
                     except Exception as e:
-                        print(f"Error removing old backup {old_backup.name}: {e}")
+                        # Other errors - log once
+                        if failed_count == 0:  # Only log first error to avoid spam
+                            print(f"Error removing old backup {old_backup.name}: {e}")
+                        failed_count += 1
+                
+                # Summary log (only if there were failures)
+                if deleted_count > 0:
+                    print(f"Cleaned up {deleted_count} old backup file(s)")
+                if failed_count > 0 and deleted_count == 0:
+                    # Only log if ALL deletions failed
+                    print(f"Note: Could not delete {failed_count} old backup file(s) (files may be in use)")
                         
         except Exception as e:
             print(f"Error cleaning up old backups: {e}")
@@ -460,23 +497,67 @@ class HostsManager:
             for domain in domains_to_block:
                 lines.append(f"{self.redirect_ip} {domain}\n")
             
-            # Write all at once
+            # Write all at once - ensure we have admin privileges first
             import stat
-            was_readonly = False
+            import ctypes
+            
+            # Verify admin privileges before attempting write
             try:
-                if not (self.hosts_path.stat().st_mode & stat.S_IWRITE):
-                    was_readonly = True
-                    self.hosts_path.chmod(stat.S_IREAD | stat.S_IWRITE)
-            except:
+                is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+                if not is_admin:
+                    raise PermissionError("Administrator privileges required to modify hosts file. Please run the application as Administrator.")
+            except (AttributeError, OSError):
+                # Not Windows or can't check - try anyway
                 pass
             
-            with open(self.hosts_path, "w", encoding="utf-8") as f:
-                f.writelines(lines)
+            was_readonly = False
+            try:
+                # Check and remove read-only attribute if present
+                file_stat = self.hosts_path.stat()
+                if not (file_stat.st_mode & stat.S_IWRITE):
+                    was_readonly = True
+                    try:
+                        # Remove read-only attribute
+                        self.hosts_path.chmod(stat.S_IREAD | stat.S_IWRITE)
+                    except (PermissionError, OSError) as chmod_err:
+                        # If chmod fails, try using Windows API
+                        try:
+                            import win32api
+                            import win32con
+                            win32api.SetFileAttributes(str(self.hosts_path), win32con.FILE_ATTRIBUTE_NORMAL)
+                        except (ImportError, OSError):
+                            # If win32api not available or fails, raise the original error
+                            raise PermissionError(
+                                f"Unable to modify hosts file permissions. Error: {chmod_err}. "
+                                "Please ensure the application is running as Administrator."
+                            )
+            except PermissionError:
+                raise
+            except Exception as perm_err:
+                # Non-critical permission error - log but continue
+                print(f"Warning: Could not modify hosts file attributes: {perm_err}")
             
+            # Attempt to write the file
+            try:
+                with open(self.hosts_path, "w", encoding="utf-8") as f:
+                    f.writelines(lines)
+            except PermissionError as e:
+                # Provide helpful error message
+                raise PermissionError(
+                    f"Permission denied: Cannot write to hosts file. "
+                    f"Please ensure:\n"
+                    f"1. The application is running as Administrator\n"
+                    f"2. No antivirus is blocking hosts file modifications\n"
+                    f"3. The hosts file is not locked by another process\n"
+                    f"Original error: {e}"
+                )
+            
+            # Restore read-only attribute if it was set
             if was_readonly:
                 try:
                     self.hosts_path.chmod(stat.S_IREAD)
-                except:
+                except (PermissionError, OSError):
+                    # Non-critical - hosts file is readable
                     pass
             
             # Verify blocking (sample check - not all domains)

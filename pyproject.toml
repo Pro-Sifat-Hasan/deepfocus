@@ -35,24 +35,23 @@ target-version = "py39"
 
 [tool.flet]
 build_number = 1
+org = "com.neurobrain"
 product = "DeepFocus"
 company = "NeuroBrain"
 copyright = "Created by Sifat"
 version = "0.1.0"
 
 [tool.flet.app]
-path = "src"       # The directory containing your code
-module = "src.main"    # The entry point: src/main.py (full module path)
+module = "main"      # Module name (main.py) relative to path
+path = "src"         # Directory containing the module
 product-name = "DeepFocus"
 company-name = "NeuroBrain"
 copyright = "Created by Sifat"
-hide-window-on-start = true
+hide-window-on-start = false  # Set to false for debugging - window will be visible on startup
 
 [tool.flet.splash]
 color = "#FFFFFF"
 dark_color = "#1E1E1E"
 
-# Template configuration - uses local template to avoid network issues during build
-# Template is prepared by running: .\prepare_build_template.ps1
 [tool.flet.template]
-url = "build-templates/flet-build-template"
+path = "build-templates/flet-build-template" # Correct key for local paths or URLs
