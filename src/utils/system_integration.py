@@ -105,7 +105,7 @@ class SystemIntegration:
         menu_title: str = "DeepFocus"
     ):
         """
-        Create system tray icon.
+        Create system tray icon using global singleton to prevent duplicates.
         
         Args:
             icon_path: Path to icon file (optional)
@@ -116,56 +116,7 @@ class SystemIntegration:
         Returns:
             Tray icon instance or None
         """
-        try:
-            import pystray
-            from PIL import Image, ImageDraw
-            import threading
-            
-            # Use class variable to track if tray icon already exists
-            if not hasattr(self, '_tray_icon') or self._tray_icon is None:
-                # Create default icon if none provided
-                if icon_path and Path(icon_path).exists():
-                    image = Image.open(icon_path)
-                else:
-                    # Create a simple default icon (blue background with white square)
-                    image = Image.new('RGB', (64, 64), color='blue')
-                    draw = ImageDraw.Draw(image)
-                    draw.rectangle([16, 16, 48, 48], fill='white')
-
-                # Create menu
-                menu = pystray.Menu(
-                    pystray.MenuItem("Show", show_callback),
-                    pystray.MenuItem("Quit", quit_callback)
-                )
-
-                # Create tray icon
-                self._tray_icon = pystray.Icon(menu_title, image, menu_title, menu)
-
-                # Run in separate thread (only if not already running)
-                if not hasattr(self, '_tray_thread') or not self._tray_thread.is_alive():
-                    def run_tray():
-                        try:
-                            self._tray_icon.run()
-                        except Exception as e:
-                            print(f"Tray icon error: {e}")
-
-                    self._tray_thread = threading.Thread(target=run_tray, daemon=True)
-                    self._tray_thread.start()
-                    print("System tray icon started")
-            else:
-                # Tray icon already exists, just return it
-                print("System tray icon already running")
-
-            return self._tray_icon
-
-        except ImportError:
-            print("pystray or PIL not available. System tray disabled.")
-            return None
-        except Exception as e:
-            print(f"Error creating system tray: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+        return get_or_create_tray_icon(icon_path, show_callback, quit_callback, menu_title)
 
     def get_app_path(self) -> str:
         """Get the path to the current application executable."""
@@ -181,3 +132,66 @@ class SystemIntegration:
 
 # Global system integration instance
 system_integration = SystemIntegration()
+
+# Global tray icon singleton to prevent duplicates
+_global_tray_icon = None
+_global_tray_thread = None
+
+
+def get_or_create_tray_icon(icon_path: Optional[str], show_callback: Callable, 
+                            quit_callback: Callable, menu_title: str = "DeepFocus"):
+    """Get or create a single global system tray icon instance.
+    
+    This ensures only ONE tray icon exists, preventing duplicates.
+    """
+    global _global_tray_icon, _global_tray_thread
+    
+    # If tray icon already exists and is running, return it
+    if _global_tray_icon is not None:
+        try:
+            # Check if thread is still alive
+            if _global_tray_thread and _global_tray_thread.is_alive():
+                return _global_tray_icon
+        except:
+            pass
+    
+    # Create new tray icon
+    try:
+        import pystray
+        from PIL import Image, ImageDraw
+        import threading
+        
+        # Create default icon if none provided
+        if icon_path and Path(icon_path).exists():
+            image = Image.open(icon_path)
+        else:
+            # Create a simple default icon (blue background with white square)
+            image = Image.new('RGB', (64, 64), color='blue')
+            draw = ImageDraw.Draw(image)
+            draw.rectangle([16, 16, 48, 48], fill='white')
+
+        # Create menu with proper callbacks
+        menu = pystray.Menu(
+            pystray.MenuItem("Show", lambda icon, item: show_callback()),
+            pystray.MenuItem("Quit", lambda icon, item: quit_callback())
+        )
+
+        # Create tray icon
+        _global_tray_icon = pystray.Icon(menu_title, image, menu_title, menu)
+
+        # Run in separate thread
+        def run_tray():
+            try:
+                _global_tray_icon.run()
+            except Exception:
+                pass  # Silent fail
+
+        _global_tray_thread = threading.Thread(target=run_tray, daemon=True)
+        _global_tray_thread.start()
+        
+        return _global_tray_icon
+
+    except ImportError:
+        return None
+    except Exception:
+        return None

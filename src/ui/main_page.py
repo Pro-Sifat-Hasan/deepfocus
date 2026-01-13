@@ -26,118 +26,51 @@ class MainPage:
         # CRITICAL: Apply blocking/unblocking based on settings (if admin)
         # This ensures persistence - both blocked AND unblocked states are respected
         if self.blocker.is_admin():
-            print("Admin privileges detected - syncing blocking state with settings...")
-            
-            # Sync all platforms with their settings state
-            # Respect both blocked (True) and unblocked (False) states
+            # Sync all platforms with their settings state immediately
             for platform, domains in PLATFORM_DOMAINS.items():
                 is_blocked_in_settings = settings.is_platform_blocked(platform)
                 
                 if is_blocked_in_settings:
                     try:
                         blocked_domains = self.blocker.hosts_manager.get_blocked_domains()
-                        # Check if ALL domains are blocked (not just some)
                         all_blocked = all(domain in blocked_domains for domain in domains)
-                        needs_blocking = not all_blocked
-                        
-                        if needs_blocking:
-                            print(f"Applying blocking for {platform} (settings say blocked, hosts file doesn't match)...")
-                            # Use blocker method which ensures proper persistence
-                            success = self.blocker.block_platform(platform, force=True)
-                            if success:
-                                print(f"✓ Successfully blocked {platform} - state persisted")
-                                # Verify persistence
-                                settings.set_platform_blocked(platform, True)
-                            else:
-                                print(f"✗ Failed to block {platform} - settings still saved for retry")
-                                # Still persist settings - will retry on next admin run
-                                settings.set_platform_blocked(platform, True)
-                        else:
-                            # All domains are blocked - verify settings match
+                        if not all_blocked:
+                            # Re-apply blocking immediately
+                            self.blocker.block_platform(platform, force=True)
                             settings.set_platform_blocked(platform, True)
-                            print(f"✓ {platform} is blocked (verified in hosts file)")
-                    except Exception as e:
-                        print(f"✗ Error blocking {platform}: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        # Ensure settings persist even on error
+                    except Exception:
                         settings.set_platform_blocked(platform, True)
                 else:
                     # Platform should be UNBLOCKED - ensure it stays unblocked
                     try:
                         blocked_domains = self.blocker.hosts_manager.get_blocked_domains()
-                        # Check if any domains are blocked (should be none)
                         blocked_domains_for_platform = [d for d in domains if d in blocked_domains]
-                        
                         if blocked_domains_for_platform:
-                            print(f"Unblocking {platform} (settings say unblocked, but domains found in hosts file)...")
-                            # Unblock all domains for this platform
-                            success = self.blocker.unblock_platform(platform)
-                            if success:
-                                print(f"✓ Successfully unblocked {platform} - state persisted")
-                                # Verify persistence
-                                settings.set_platform_blocked(platform, False)
-                            else:
-                                print(f"✗ Failed to unblock {platform} - settings still saved for retry")
-                                # Still persist settings - will retry on next admin run
-                                settings.set_platform_blocked(platform, False)
-                        else:
-                            # All domains are unblocked - verify settings match
+                            # Unblock immediately
+                            self.blocker.unblock_platform(platform)
                             settings.set_platform_blocked(platform, False)
-                            print(f"✓ {platform} is unblocked (verified in hosts file)")
-                    except Exception as e:
-                        print(f"✗ Error unblocking {platform}: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        # Ensure settings persist even on error
+                    except Exception:
                         settings.set_platform_blocked(platform, False)
             
-            # Block adult content if enabled - ALWAYS use blocker method for proper cleanup and verification
+            # Block adult content and casino/gambling if enabled
             if settings.is_adult_content_blocked():
                 try:
-                    from ..config.constants import ADULT_CONTENT_DOMAINS
-                    print(f"Applying adult content blocking ({len(ADULT_CONTENT_DOMAINS)} domains)...")
-                    # Use blocker method which includes cleanup, force mode, and verification
-                    success = self.blocker.block_adult_content()
-                    if success:
-                        # Verify after blocking
-                        blocked_domains = self.blocker.hosts_manager.get_blocked_domains()
-                        blocked_count = sum(1 for domain in ADULT_CONTENT_DOMAINS if domain in blocked_domains)
-                        print(f"✓ Adult content: {blocked_count}/{len(ADULT_CONTENT_DOMAINS)} domains verified in hosts file")
-                    else:
-                        print("✗ Failed to block adult content")
-                except Exception as e:
-                    print(f"✗ Error blocking adult content: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    self.blocker.block_adult_content()
+                except Exception:
+                    pass
             
-            # Block casino/gambling if enabled - ALWAYS use blocker method for proper cleanup and verification
             if settings.is_casino_gambling_blocked():
                 try:
-                    print(f"Applying casino/gambling blocking ({len(CASINO_GAMBLING_DOMAINS)} domains)...")
-                    # Use blocker method which includes cleanup, force mode, and verification
-                    success = self.blocker.block_casino_gambling()
-                    if success:
-                        # Verify after blocking
-                        blocked_domains = self.blocker.hosts_manager.get_blocked_domains()
-                        blocked_count = sum(1 for domain in CASINO_GAMBLING_DOMAINS if domain in blocked_domains)
-                        print(f"✓ Casino/gambling: {blocked_count}/{len(CASINO_GAMBLING_DOMAINS)} domains verified in hosts file")
-                    else:
-                        print("✗ Failed to block casino/gambling")
-                except Exception as e:
-                    print(f"✗ Error blocking casino/gambling: {e}")
-                    import traceback
-                    traceback.print_exc()
-        else:
-            print("INFO: Running without Administrator privileges.")
-            print("Blocking features will not work, but you can use the app to manage settings.")
+                    self.blocker.block_casino_gambling()
+                except Exception:
+                    pass
         
         # Sync settings with hosts file (only if admin)
         try:
             if self.blocker.is_admin():
                 self.blocker.sync_with_hosts_file()
-        except Exception as e:
-            print(f"Error syncing with hosts file: {e}")
+        except Exception:
+            pass
 
     def create_page(self) -> ft.Container:
         """Create the main page UI."""
@@ -327,46 +260,23 @@ class MainPage:
         
         try:
             if new_state:
-                # Block the platform - ALWAYS force re-blocking to ensure persistence
-                # This ensures that if platform was unblocked, it gets properly blocked again
-                force = True  # Always force to ensure proper blocking after unblock
-                success = self.blocker.block_platform(platform, force=force)
+                # Block the platform - ALWAYS force re-blocking for real-time effect
+                success = self.blocker.block_platform(platform, force=True)
                 if success:
-                    # Verify blocking was applied
-                    blocked_domains = self.blocker.hosts_manager.get_blocked_domains()
-                    platform_domains = PLATFORM_DOMAINS.get(platform, [])
-                    is_actually_blocked = any(domain in blocked_domains for domain in platform_domains)
-                    
-                    if is_actually_blocked:
-                        self._show_success(f"{lang.translate(platform)} blocked successfully")
-                        self._update_platform_card(platform)
-                    else:
-                        # Try force blocking
-                        success = self.blocker.block_platform(platform, force=True)
-                        if success:
-                            self._show_success(f"{lang.translate(platform)} blocked successfully")
-                        else:
-                            self._show_info(f"Settings saved. Blocking will apply when running as Administrator.")
-                        self._update_platform_card(platform)
+                    self._show_success(f"{lang.translate(platform)} blocked successfully")
                 else:
-                    # Try force blocking
-                    success = self.blocker.block_platform(platform, force=True)
-                    if success:
-                        self._show_success(f"{lang.translate(platform)} blocked successfully")
-                    else:
-                        self._show_info(f"Settings saved. Blocking will apply when running as Administrator.")
-                    self._update_platform_card(platform)
+                    self._show_info("Settings saved. Run as Administrator to apply blocking.")
+                self._update_platform_card(platform)
             else:
-                # Unblock the platform
+                # Unblock the platform - immediate effect
                 success = self.blocker.unblock_platform(platform)
                 if success:
                     self._show_success(f"{lang.translate(platform)} unblocked successfully")
-                    self._update_platform_card(platform)
                 else:
-                    self._show_info(f"Settings saved. Changes will apply when running as Administrator.")
-                    self._update_platform_card(platform)
-        except Exception as e:
-            self._show_info(f"Settings saved. Error applying blocking: {str(e)}")
+                    self._show_info("Settings saved. Run as Administrator to apply changes.")
+                self._update_platform_card(platform)
+        except Exception:
+            self._show_info("Settings saved. Error applying blocking.")
             self._update_platform_card(platform)
 
     def _handle_adult_content_toggle(self, new_state: bool) -> None:
@@ -393,10 +303,8 @@ class MainPage:
                     self._show_success("Adult content unblocked successfully")
                 else:
                     self._show_info("Settings saved. Changes will apply when running as Administrator.")
-        except Exception as e:
-            self._show_info(f"Settings saved. Error applying blocking: {str(e)}")
-            import traceback
-            traceback.print_exc()
+        except Exception:
+            self._show_info("Settings saved. Error applying blocking.")
     
     def _handle_casino_gambling_toggle(self, new_state: bool) -> None:
         """Handle casino/gambling toggle."""
@@ -412,19 +320,17 @@ class MainPage:
             if new_state:
                 success = self.blocker.block_casino_gambling()
                 if success:
-                    self._show_success(f"Casino/Gambling sites blocked successfully ({len(CASINO_GAMBLING_DOMAINS)} domains)")
+                    self._show_success("Casino/Gambling sites blocked successfully")
                 else:
-                    self._show_info("Settings saved. Blocking will apply when running as Administrator.")
+                    self._show_info("Settings saved. Run as Administrator to apply blocking.")
             else:
                 success = self.blocker.unblock_casino_gambling()
                 if success:
                     self._show_success("Casino/Gambling sites unblocked successfully")
                 else:
-                    self._show_info("Settings saved. Changes will apply when running as Administrator.")
-        except Exception as e:
-            self._show_info(f"Settings saved. Error applying blocking: {str(e)}")
-            import traceback
-            traceback.print_exc()
+                    self._show_info("Settings saved. Run as Administrator to apply changes.")
+        except Exception:
+            self._show_info("Settings saved. Error applying blocking.")
 
     def _reset_platform_toggle(self, platform: str) -> None:
         """Reset platform toggle to current state."""
@@ -438,10 +344,9 @@ class MainPage:
         # Verify against hosts file if admin (for accuracy)
         if self.blocker.is_admin():
             is_blocked_in_hosts = self.blocker.is_platform_blocked(platform)
-            # If settings and hosts don't match, sync them (settings is source of truth)
+            # If settings and hosts don't match, sync them immediately (settings is source of truth)
             if is_blocked_in_settings != is_blocked_in_hosts:
-                print(f"Warning: {platform} state mismatch - syncing...")
-                # Apply settings to hosts file to sync
+                # Apply settings to hosts file to sync in real-time
                 if is_blocked_in_settings:
                     self.blocker.block_platform(platform, force=True)
                 else:

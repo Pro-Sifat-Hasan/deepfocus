@@ -66,14 +66,38 @@ class Auth:
 
     def verify_main_password(self, password: str) -> bool:
         """Verify main application password."""
-        password_hash = settings.get_main_password_hash()
-        
-        if password_hash is None:
-            # Initialize with default password
-            self.initialize_main_password()
+        try:
+            password_hash = settings.get_main_password_hash()
+            
+            if password_hash is None:
+                # Initialize with default password
+                self.initialize_main_password()
+                # Re-read hash after initialization
+                password_hash = settings.get_main_password_hash()
+                if password_hash is None:
+                    # Still None - fallback to direct comparison
+                    return password == DEFAULT_PASSWORD
+            
+            # Verify password against hash
+            result = self._verify_password(password, password_hash)
+            
+            # Debug logging (can be removed in production)
+            if not result:
+                # Try to re-initialize if verification fails (settings might be corrupted)
+                try:
+                    settings_file = settings.settings_file
+                    if not settings_file.exists() or settings_file.stat().st_size == 0:
+                        # Settings file missing or empty - reinitialize
+                        self.initialize_main_password()
+                        return password == DEFAULT_PASSWORD
+                except:
+                    pass
+            
+            return result
+        except Exception as e:
+            # Fallback: if all else fails, try direct comparison with default
+            print(f"Error verifying password: {e}")
             return password == DEFAULT_PASSWORD
-        
-        return self._verify_password(password, password_hash)
 
     def change_main_password(self, old_password: str, new_password: str) -> bool:
         """Change main password."""

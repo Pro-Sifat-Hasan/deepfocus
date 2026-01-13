@@ -60,6 +60,11 @@ Filename: "{app}\deepfocus.exe"; Description: "{cm:LaunchProgram,DeepFocus}"; Fl
 ; Add to startup if task is selected - start minimized (in tray)
 ; HKCU doesn't require admin privileges, so this works even without elevation
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "DeepFocus"; ValueData: """{app}\deepfocus.exe"" --minimized"; Flags: uninsdeletevalue; Tasks: autostart
+
+; CRITICAL: Force the app to always run as administrator
+; This registry key makes Windows always request admin elevation when launching the EXE
+Root: "HKLM"; Subkey: "SOFTWARE\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"; ValueType: String; ValueName: "{app}\deepfocus.exe"; ValueData: "RUNASADMIN"; Flags: uninsdeletekeyifempty uninsdeletevalue; MinVersion: 0,6.1
+
 ; Note: Inno Setup automatically creates HKLM uninstaller entries in:
 ; HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Uninstall\DeepFocus
 ; These are created with admin privileges when PrivilegesRequired=admin is set

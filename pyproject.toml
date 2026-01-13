@@ -9,6 +9,7 @@ dependencies = [
     "cryptography>=41.0.0",
     "pystray>=0.19.5",
     "pillow>=10.0.0",
+    "pywin32>=306; sys_platform == 'win32'",  # Windows-specific: for mutex and admin checks
 ]
 
 [project.optional-dependencies]

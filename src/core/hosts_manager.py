@@ -167,15 +167,10 @@ class HostsManager:
                             print(f"Error removing old backup {old_backup.name}: {e}")
                         failed_count += 1
                 
-                # Summary log (only if there were failures)
-                if deleted_count > 0:
-                    print(f"Cleaned up {deleted_count} old backup file(s)")
-                if failed_count > 0 and deleted_count == 0:
-                    # Only log if ALL deletions failed
-                    print(f"Note: Could not delete {failed_count} old backup file(s) (files may be in use)")
+                # Silent cleanup - no logging needed
                         
-        except Exception as e:
-            print(f"Error cleaning up old backups: {e}")
+        except Exception:
+            pass  # Silent fail
 
     def read_hosts(self) -> List[str]:
         """Read the hosts file and return lines."""
@@ -210,8 +205,7 @@ class HostsManager:
                             blocked.add(part.lower())
 
             return blocked
-        except Exception as e:
-            print(f"Error reading blocked domains: {e}")
+        except Exception:
             return set()  # Return empty set if we can't read
 
     def block_domain(self, domain: str, force: bool = False) -> bool:
@@ -305,14 +299,12 @@ class HostsManager:
             # Add entry if not found or if we forced removal
             # Always add ONE domain per line for maximum compatibility
             if not entry_found or force:
-                print(f"{'Re-adding' if force else 'Adding new'} entry for domain {domain}")
                 # Add DeepFocus section comment if not present
                 marker = "# DeepFocus entries"
                 marker_found = any(marker in line for line in lines)
                 
                 if not marker_found:
                     lines.append(f"\n{marker}\n")
-                    print("Added DeepFocus section marker")
                 # Add entry - ONE domain per line
                 lines.append(entry)
 
@@ -327,10 +319,8 @@ class HostsManager:
                 pass
             
             # Write back to hosts file
-            print(f"Writing {len(lines)} lines to hosts file...")
             with open(self.hosts_path, "w", encoding="utf-8") as f:
                 f.writelines(lines)
-            print(f"Successfully wrote to hosts file")
             
             # Make read-only again if it was read-only
             if was_readonly:
@@ -344,30 +334,21 @@ class HostsManager:
                 with open(self.hosts_path, "r", encoding="utf-8") as f:
                     content = f.read().lower()
                     if domain in content and f"{self.redirect_ip} {domain}" in content:
-                        # Domain added successfully - no DNS flush needed here (batch flush later)
+                        # Domain added successfully
                         return True
             except:
                 pass
-            
+
             # If quick check fails, do full verification
             blocked_domains = self.get_blocked_domains()
-            if domain in blocked_domains:
-                return True
-            else:
-                print(f"WARNING: Domain {domain} verification failed")
-                return False
+            return domain in blocked_domains
 
-        except PermissionError as e:
-            print(f"PermissionError blocking domain {domain}: {e}")
-            raise IOError(f"Cannot modify hosts file: Permission denied. Please run as administrator.")
-        except IOError as e:
-            print(f"IOError blocking domain {domain}: {e}")
-            raise IOError(f"Cannot modify hosts file: {e}. Please run as administrator.")
-        except Exception as e:
-            print(f"Unexpected error blocking domain {domain}: {e}")
-            import traceback
-            traceback.print_exc()
+        except PermissionError:
+            raise IOError("Cannot modify hosts file: Permission denied. Please run as administrator.")
+        except IOError:
             raise
+        except Exception as e:
+            raise IOError(f"Cannot modify hosts file: {e}. Please run as administrator.")
 
     def unblock_domain(self, domain: str) -> bool:
         """Unblock a domain by removing it from hosts file."""
@@ -457,13 +438,10 @@ class HostsManager:
                 domains_to_block.append(domain)
         
         if not domains_to_block and not force:
-            print(f"All {len(domains)} domains already blocked")
             return True
         
         # Batch write all domains at once for performance
         try:
-            print(f"Batch blocking {len(domains_to_block)} domains...")
-            
             # Backup before modification
             self.backup_hosts()
             
@@ -549,9 +527,9 @@ class HostsManager:
                             )
             except PermissionError:
                 raise
-            except Exception as perm_err:
-                # Non-critical permission error - log but continue
-                print(f"Warning: Could not modify hosts file attributes: {perm_err}")
+            except Exception:
+                # Non-critical permission error - continue silently
+                pass
             
             # Attempt to write the file
             try:
@@ -577,19 +555,12 @@ class HostsManager:
                     pass
             
             # Verify blocking (sample check - not all domains)
-            blocked_domains = self.get_blocked_domains()
-            verified_count = sum(1 for d in domains_to_block[:10] if d in blocked_domains)
-            print(f"Batch write complete: {len(domains_to_block)} domains added, {verified_count}/10 verified")
-            
-            # Flush DNS cache ONCE after all domains are added
+            # Flush DNS cache immediately after blocking for real-time effect
             self._flush_dns_cache()
             
             return True
             
-        except Exception as e:
-            print(f"Error batch blocking domains: {e}")
-            import traceback
-            traceback.print_exc()
+        except Exception:
             return False
     
     def _cleanup_malformed_entries(self) -> None:
@@ -624,7 +595,7 @@ class HostsManager:
                             is_malformed = True
                         
                         if is_malformed:
-                            print(f"Removing malformed entry: {line_stripped[:80]}...")
+                            # Silent removal of malformed entries
                             modified = True
                             cleaned_domains.append(domain_part)
                             continue  # Skip this malformed entry

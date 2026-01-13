@@ -14,18 +14,45 @@ class Settings:
     """Manages application settings and user preferences."""
 
     def __init__(self):
-        # Use Flet's storage API for persistent data
-        app_data_path = os.getenv("FLET_APP_STORAGE_DATA")
-        if app_data_path:
-            # Use Flet's designated data directory
-            self.settings_file = Path(app_data_path) / "settings.json"
+        # CRITICAL: Use consistent settings path that works for both admin and normal user
+        # When running as admin, FLET_APP_STORAGE_DATA might point to admin's AppData
+        # We want to use the current user's AppData regardless of admin status
+        import platform
+        if platform.system() == "Windows":
+            # Always use current user's APPDATA\Roaming for consistent settings access
+            # This ensures login works whether running as admin or normal user
+            appdata_roaming = os.getenv("APPDATA")
+            if appdata_roaming:
+                settings_dir = Path(appdata_roaming) / "DeepFocus"
+                settings_dir.mkdir(parents=True, exist_ok=True)
+                self.settings_file = settings_dir / "settings.json"
+            else:
+                # Fallback: try FLET_APP_STORAGE_DATA if APPDATA not available
+                app_data_path = os.getenv("FLET_APP_STORAGE_DATA")
+                if app_data_path:
+                    self.settings_file = Path(app_data_path) / "settings.json"
+                else:
+                    # Last resort: use local directory
+                    from .constants import SETTINGS_FILE
+                    self.settings_file = Path(SETTINGS_FILE)
         else:
-            # Fallback to local app data directory
-            from .constants import SETTINGS_FILE
-            self.settings_file = Path(SETTINGS_FILE)
+            # Non-Windows: use Flet's storage API or local file
+            app_data_path = os.getenv("FLET_APP_STORAGE_DATA")
+            if app_data_path:
+                self.settings_file = Path(app_data_path) / "settings.json"
+            else:
+                from .constants import SETTINGS_FILE
+                self.settings_file = Path(SETTINGS_FILE)
         
         # Ensure directory exists
-        self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError) as e:
+            print(f"Warning: Could not create settings directory: {e}")
+            # Fallback to local directory
+            from .constants import SETTINGS_FILE
+            self.settings_file = Path(SETTINGS_FILE)
+            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
         
         self._settings: Dict[str, Any] = {}
         self.load()

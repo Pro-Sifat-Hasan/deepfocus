@@ -1,148 +1,145 @@
-# DeepFocus
+# DeepFocus 🎯
 
-A powerful Windows desktop application designed to help you maintain focus by blocking distracting websites and social media platforms. Built with Python and Flet framework.
+**A powerful Windows desktop application to block distracting websites and social media platforms, helping you maintain focus and productivity.**
 
-## Overview
+[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)](https://www.microsoft.com/windows)
 
-DeepFocus enables you to take control of your digital distractions by blocking access to websites at the system level. Perfect for productivity, study sessions, or maintaining digital wellness. The application modifies the Windows hosts file to redirect blocked domains, ensuring they're inaccessible across all browsers and applications.
+---
 
-## Key Features
+## ✨ Features
 
-- **Social Media Blocking**: Block/unblock popular platforms (Facebook, Instagram, LinkedIn, Twitter/X, YouTube, TikTok, Reddit, Snapchat)
-- **Custom Domain Management**: Add and block any custom domains or websites
-- **Adult Content Protection**: Automatic blocking of adult content websites
-- **Password Protection**: Secure your settings with password authentication (default: `OpentheBlocker`)
-- **Per-Platform Security**: Set individual passwords for each platform
-- **Multilingual Interface**: Supports English and Bengali (বাংলা)
-- **System Tray Integration**: Minimize to system tray with right-click menu
-- **Auto-Start Option**: Launch automatically on Windows boot
-- **Modern UI**: Clean, responsive interface built with Flet Material Design
+- **Social Media Blocking** - Facebook, Instagram, LinkedIn, Twitter/X, YouTube, TikTok, Reddit, Snapchat
+- **Custom Domains** - Block any website or domain
+- **Content Filtering** - Adult content & gambling site blocking
+- **Password Protection** - Secure settings with master password
+- **System Tray** - Minimize to tray, right-click menu
+- **Auto-Start** - Launch on Windows boot
+- **Multilingual** - English & Bengali support
 
-## Requirements
+---
 
-- **OS**: Windows 10/11
-- **Python**: 3.10 or higher
-- **Permissions**: Administrator privileges (required for hosts file modification)
+## 🚀 Quick Start
 
-## Installation
+### For End Users
 
-### Prerequisites
+1. Download and run `DeepFocus_Setup.exe`
+2. Install (will request Administrator privileges)
+3. Launch DeepFocus → Login with: `OpentheBlocker`
+4. Toggle platforms to block/unblock
 
-Install UV (if not already installed):
+### For Developers
+
 ```bash
-pip install uv
-```
-
-### Setup
-
-1. Clone the repository:
-```bash
+# Clone and setup
 git clone https://github.com/Pro-Sifat-Hasan/deepfocus.git
 cd deepfocus
-```
-
-2. Create virtual environment and install dependencies:
-```bash
+pip install uv
 uv venv && .venv\Scripts\activate && uv pip install -e .
-```
 
-## Usage
-
-### Running from Source
-
-**Important**: Run as Administrator to allow hosts file modification.
-
-```bash
+# Run (as Administrator)
 python -m src.main
 ```
 
-### Building Windows Executable
+---
 
-**Automated Build (Recommended):**
+## 📦 Building
 
-Simply run:
+### Build Executable
+
 ```bash
 .\build_windows.ps1
 ```
 
-This fully automated script will:
-1. Run `flet build windows` (handles compilation)
-2. Automatically copy all plugin DLLs
-3. Copy Python runtime DLLs from serious_python
-4. Verify all required files are present
-5. Create a complete distribution package in `dist/DeepFocus/` folder
+Output: `build\windows\x64\runner\Release\deepfocus.exe`
 
-**Distribution Package:**
-- The `dist/DeepFocus/` folder contains **everything** needed to run the app
-- Zip this entire folder and share it
-- Recipients extract and run `deepfocus.exe` from the folder
-- All DLLs, Python runtime, and dependencies are included
-- No manual installation or setup required
+### Create Installer
 
-**Note:** The executable must stay with its folder contents (DLLs, Lib, data, etc.) - they work together as a complete package.
+1. Install [Inno Setup](https://jrsoftware.org/isdl.php)
+2. Build executable first: `.\build_windows.ps1`
+3. Right-click `installer.iss` → Compile
 
-**Manual Build (if needed):**
-```bash
-flet build windows
-.\copy_plugin_dlls.ps1  # Copy plugin DLLs manually
+---
+
+## 📖 Usage
+
+**Blocking/Unblocking:**
+- Toggle switches on main page → Changes apply immediately
+- Settings saved automatically
+
+**System Tray:**
+- Close window → Minimizes to tray
+- Right-click tray icon:
+  - **Show** - Restore window
+  - **Quit** - Exit application
+
+**Default Password:** `OpentheBlocker` (change in Settings)
+
+---
+
+## 🔧 How It Works
+
+- Modifies Windows hosts file (`C:\Windows\System32\drivers\etc\hosts`)
+- Redirects blocked domains to `127.0.0.1`
+- Works across **all browsers and applications**
+- Automatic backups before modifications
+- Background monitor re-applies blocks if removed
+
+---
+
+## 🐛 Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| Permission denied | Run as Administrator |
+| Websites not blocking | Clear DNS: `ipconfig /flushdns` |
+| UAC prompt not showing | Check executable compatibility settings |
+| Multiple tray icons | Close all instances, restart |
+| Login not working | Delete `%APPDATA%\DeepFocus\settings.json` |
+
+---
+
+## 📁 Project Structure
+
+```
+src/
+├── main.py              # Entry point
+├── config/              # Settings, constants
+├── core/                # Blocking logic, auth
+├── ui/                  # Interface components
+└── utils/               # Language, system integration
 ```
 
-The executable will be located in `build/flutter/build/windows/x64/runner/Release/`. The built application automatically requests administrator privileges when launched.
+---
 
-### Default Credentials
+## ⚙️ Requirements
 
-- **Login Password**: `OpentheBlocker`
+- **Windows 10/11** (64-bit)
+- **Python 3.10+** (for development)
+- **Administrator privileges** (required)
 
-You can change this password in the Settings page after first login.
+---
 
-## How It Works
+## 🔐 Security
 
-DeepFocus modifies the Windows hosts file (`C:\Windows\System32\drivers\etc\hosts`) to redirect blocked domains to `127.0.0.1`, effectively preventing access to those websites across your entire system. The application:
+- ✅ **No Internet** - Works completely offline
+- ✅ **Local Storage** - All data stored locally
+- ✅ **Password Hashing** - PBKDF2-SHA256 encryption
+- ✅ **Auto Backups** - Hosts file backed up automatically
 
-- Creates automatic backups before modifying the hosts file
-- Tracks blocked/unblocked state in local settings
-- Requires administrator privileges for security
-- Provides an intuitive interface for managing blocks
+---
 
-## Project Structure
+## 📄 License
 
-```
-deepfocus/
-├── src/
-│   ├── main.py              # Application entry point
-│   ├── config/              # Configuration and constants
-│   ├── core/                # Core functionality (blocker, auth, hosts)
-│   ├── ui/                  # User interface components
-│   └── utils/               # Utilities (language, system integration)
-├── build-templates/         # Flet build templates
-├── pyproject.toml           # Project configuration
-└── README.md
-```
+Created by Sifat for NeuroBrain. Proprietary software. All rights reserved.
 
-## Security
+---
 
-- Passwords are securely hashed using PBKDF2 with SHA-256
-- All settings stored locally in JSON format
-- Administrator privileges required for system-level blocking
+## 📞 Support
 
-## Troubleshooting
+- **Repository:** [GitHub](https://github.com/Pro-Sifat-Hasan/deepfocus)
+- **Issues:** [Report Issues](https://github.com/Pro-Sifat-Hasan/deepfocus/issues)
 
-**Permission Denied Errors**
-- Ensure the application is running with Administrator privileges
-- Right-click the executable and select "Run as administrator"
+---
 
-**Websites Not Blocking**
-- Verify the application has Administrator privileges
-- Clear your browser's DNS cache
-- Restart the application
-
-**Language Settings**
-- Restart the application after changing language settings
-
-## License
-
-Created by Sifat for NeuroBrain.
-
-## Disclaimer
-
-This software is provided as-is. Use at your own risk. Always ensure you have backups of your hosts file before making modifications.
+**Version:** 0.1.0 | **Last Updated:** January 2025

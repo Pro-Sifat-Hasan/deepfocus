@@ -27,16 +27,13 @@ class Blocker:
             force: If True, force re-blocking even if domains appear blocked (useful after unblocking)
         """
         if platform not in PLATFORM_DOMAINS:
-            print(f"ERROR: Platform {platform} not found in PLATFORM_DOMAINS")
             return False
 
         domains = PLATFORM_DOMAINS[platform]
-        print(f"Blocking platform {platform} with {len(domains)} domains: {domains} (force={force})")
         
         try:
             # Always update settings FIRST to ensure persistence
             settings.set_platform_blocked(platform, True)
-            print(f"Settings updated: {platform} marked as blocked (persisted)")
             
             # Check if platform was recently unblocked - if so, force re-blocking
             blocked_domains = self.hosts_manager.get_blocked_domains()
@@ -54,32 +51,23 @@ class Blocker:
                 else:
                     success = True
             
-            print(f"block_domains returned: {success}")
-            
             if success:
-                # Verify blocking was applied
+                # Verify blocking was applied immediately
                 blocked_domains_after = self.hosts_manager.get_blocked_domains()
                 all_blocked_after = all(domain in blocked_domains_after for domain in domains)
-                if all_blocked_after:
-                    print(f"✓ Verified: All domains for {platform} are blocked")
-                else:
-                    print(f"WARNING: Not all domains for {platform} are blocked, retrying with force...")
+                if not all_blocked_after:
+                    # Retry with force to ensure all domains blocked
                     success = self.hosts_manager.block_domains(domains, force=True)
-                    # Ensure settings persist even if blocking partially fails
                     settings.set_platform_blocked(platform, True)
             else:
-                print(f"WARNING: Failed to block all domains for {platform}")
                 # Still persist settings - blocking will apply on next admin run
                 settings.set_platform_blocked(platform, True)
             
             return success
-        except Exception as e:
-            print(f"EXCEPTION in block_platform for {platform}: {e}")
-            import traceback
-            traceback.print_exc()
+        except Exception:
             # Ensure settings persist even on error
             settings.set_platform_blocked(platform, True)
-            raise
+            return False
 
     def unblock_platform(self, platform: str) -> bool:
         """Unblock a platform by unblocking all its domains."""
@@ -92,9 +80,8 @@ class Blocker:
         if success:
             # Update settings - remember it was unblocked
             settings.set_platform_blocked(platform, False)
-            # Flush DNS cache after unblocking
+            # Flush DNS cache immediately after unblocking for real-time effect
             self.hosts_manager._flush_dns_cache()
-            print(f"Settings updated: {platform} marked as unblocked (persisted)")
         else:
             # Still update settings even if hosts file update failed
             settings.set_platform_blocked(platform, False)
@@ -138,17 +125,12 @@ class Blocker:
             return self.block_platform(platform)
 
     def block_adult_content(self) -> bool:
-        """Block adult content domains - optimized batch write."""
-        print(f"Blocking {len(ADULT_CONTENT_DOMAINS)} adult content domains...")
+        """Block adult content domains - optimized batch write for real-time blocking."""
         # Use force=True to ensure all domains are blocked and clean up malformed entries
         success = self.hosts_manager.block_domains(ADULT_CONTENT_DOMAINS, force=True)
         
         if success:
             settings.set_adult_content_blocked(True)
-            # DNS cache already flushed by block_domains - just verify count
-            blocked_domains = self.hosts_manager.get_blocked_domains()
-            blocked_count = sum(1 for domain in ADULT_CONTENT_DOMAINS if domain in blocked_domains)
-            print(f"✓ Adult content: {blocked_count}/{len(ADULT_CONTENT_DOMAINS)} domains verified")
         
         return success
 
@@ -169,22 +151,13 @@ class Blocker:
             return self.block_adult_content()
     
     def block_casino_gambling(self) -> bool:
-        """Block casino/gambling domains - one domain per line for reliability."""
-        print(f"Blocking {len(CASINO_GAMBLING_DOMAINS)} casino/gambling domains...")
+        """Block casino/gambling domains - optimized for real-time blocking."""
         # Use force=True to ensure all domains are blocked and clean up malformed entries
         success = self.hosts_manager.block_domains(CASINO_GAMBLING_DOMAINS, force=True)
         
         if success:
-            # Verify blocking
-            blocked_domains = self.hosts_manager.get_blocked_domains()
-            blocked_count = sum(1 for domain in CASINO_GAMBLING_DOMAINS if domain in blocked_domains)
-            print(f"Casino/gambling: {blocked_count}/{len(CASINO_GAMBLING_DOMAINS)} domains blocked")
-            
             settings.set_casino_gambling_blocked(True)
-            # Aggressive DNS cache flush
-            self.hosts_manager._flush_dns_cache()
-            import time
-            time.sleep(0.5)
+            # Immediate DNS cache flush for real-time effect
             self.hosts_manager._flush_dns_cache()
         
         return success
@@ -304,7 +277,6 @@ class Blocker:
         """Sync settings with hosts file and apply blocking/unblocking based on settings.
         This ensures settings persist after computer restart."""
         if not self.is_admin():
-            print("WARNING: Not running as Administrator - blocking will not work!")
             return
         
         blocked_domains = self.hosts_manager.get_blocked_domains()
@@ -321,38 +293,25 @@ class Blocker:
                     # Use force=True to ensure all domains are properly blocked
                     success = self.hosts_manager.block_domains(domains, force=True)
                     if success:
-                        print(f"✓ Applied blocking for {platform}")
-                        # Verify and ensure settings persist
                         settings.set_platform_blocked(platform, True)
                     else:
-                        print(f"✗ Failed to apply blocking for {platform}")
-                        # Still persist settings - will retry later
                         settings.set_platform_blocked(platform, True)
-                except Exception as e:
-                    print(f"✗ Error blocking {platform}: {e}")
-                    # Ensure settings persist even on error
+                except Exception:
                     settings.set_platform_blocked(platform, True)
             # If settings say unblocked but hosts file still has domains, unblock them
             elif not is_blocked_in_settings and is_blocked_in_hosts:
                 try:
                     success = self.hosts_manager.unblock_domains(domains)
                     if success:
-                        print(f"✓ Applied unblocking for {platform}")
-                        # Flush DNS cache after unblocking
+                        # Flush DNS cache immediately after unblocking
                         self.hosts_manager._flush_dns_cache()
-                    else:
-                        print(f"✗ Failed to apply unblocking for {platform}")
-                except Exception as e:
-                    print(f"✗ Error unblocking {platform}: {e}")
+                except Exception:
+                    pass
             # If hosts file matches settings, ensure settings are persisted
             elif all_blocked_in_hosts and is_blocked_in_settings:
-                # Both match - ensure settings are persisted
                 settings.set_platform_blocked(platform, True)
-                print(f"✓ {platform} is blocked (verified in hosts file)")
             elif all_blocked_in_hosts and not is_blocked_in_settings:
                 # Hosts file says blocked but settings say unblocked - update settings to match hosts
-                # This can happen if someone manually edited hosts file or after restart
-                print(f"Info: {platform} is blocked in hosts file but not in settings - updating settings")
                 settings.set_platform_blocked(platform, True)
         
         # Apply adult content blocking if settings say blocked but hosts file doesn't
@@ -361,13 +320,9 @@ class Blocker:
             needs_blocking = blocked_count < (len(ADULT_CONTENT_DOMAINS) * 0.8)
             if needs_blocking:
                 try:
-                    success = self.hosts_manager.block_domains(ADULT_CONTENT_DOMAINS, force=True)
-                    if success:
-                        print(f"✓ Applied blocking for adult content ({len(ADULT_CONTENT_DOMAINS)} domains)")
-                    else:
-                        print("✗ Failed to apply blocking for adult content")
-                except Exception as e:
-                    print(f"✗ Error blocking adult content: {e}")
+                    self.hosts_manager.block_domains(ADULT_CONTENT_DOMAINS, force=True)
+                except Exception:
+                    pass
         
         # Apply casino/gambling blocking if settings say blocked but hosts file doesn't
         if settings.is_casino_gambling_blocked():
@@ -375,10 +330,6 @@ class Blocker:
             needs_blocking = blocked_count < (len(CASINO_GAMBLING_DOMAINS) * 0.8)
             if needs_blocking:
                 try:
-                    success = self.hosts_manager.block_domains(CASINO_GAMBLING_DOMAINS, force=True)
-                    if success:
-                        print(f"✓ Applied blocking for casino/gambling ({len(CASINO_GAMBLING_DOMAINS)} domains)")
-                    else:
-                        print("✗ Failed to apply blocking for casino/gambling")
-                except Exception as e:
-                    print(f"✗ Error blocking casino/gambling: {e}")
+                    self.hosts_manager.block_domains(CASINO_GAMBLING_DOMAINS, force=True)
+                except Exception:
+                    pass

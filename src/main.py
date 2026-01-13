@@ -212,13 +212,7 @@ class App:
         # Prevent window from closing - app always runs  
         self.page.window.prevent_close = True
         
-        # Setup system tray FIRST before window event handler
-        # This ensures tray icon is available when close button is clicked
-        try:
-            setup_system_tray(self)
-            print("System tray icon created - app will minimize to tray when closed")
-        except Exception as e:
-            print(f"Warning: Could not set up system tray: {e}")
+        # System tray will be set up later after app initialization
            
         # Handle window close event - minimize to tray instead of closing
         def on_window_event(e):
@@ -233,32 +227,27 @@ class App:
                 
                 if is_close_event:
                     # Hide window instead of closing - app keeps running in tray
-                    self.page.window.visible = False
-                    self.page.window.always_on_top = False
-                    self.page.update()
-                    print("Window hidden - app running in system tray (close button clicked)")
-                    # Ensure system tray is still available
                     try:
-                        setup_system_tray(self)
-                    except:
+                        self.page.window.visible = False
+                        self.page.window.always_on_top = False
+                        self.page.update()
+                    except Exception:
                         pass
-            except Exception as ex:
-                print(f"Error in window close handler: {ex}")
+            except Exception:
+                pass
         
         # Set up window event handler properly
         try:
             self.page.window.on_event = on_window_event
-            print("Window close event handler set up successfully")
         except AttributeError:
-            # Alternative approach if on_event not available
             try:
                 self.page.on_window_event = on_window_event
-                print("Window close event handler set up (alternative method)")
-            except Exception as ex:
-                print(f"Warning: Could not set window close event handler: {ex}")
+            except Exception:
+                pass
         
         # Store reference to app instance for tray callbacks
         self.app_instance = self
+        self.tray_icon = None  # Will store tray icon reference
           
         # Set theme
         self.page.theme_mode = ft.ThemeMode.SYSTEM 
@@ -325,14 +314,13 @@ class App:
                 # Protect hosts file
                 protection_monitor.protect_hosts_file()
                 
-                # System tray is already set up in __init__ (before window events)
-                # Just ensure it's running
+                # Setup system tray AFTER everything is initialized (singleton prevents duplicates)
                 try:
                     setup_system_tray(self)
-                except Exception as e:
-                    print(f"Warning: Could not verify system tray: {e}")
-        except Exception as e:
-            print(f"Error checking admin privileges: {e}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
         
         # Always enable auto-start - app should always run
         # Ensure settings and system_integration are available
@@ -400,12 +388,10 @@ class App:
         """Handle successful login."""
         self.is_logged_in = True
         
-        # CRITICAL: Apply blocking immediately after login
-        print("[App] Login successful - applying blocking immediately...")
+        # CRITICAL: Apply blocking immediately after login for real-time effect
         try:
             blocker = Blocker()
             if blocker.is_admin():
-                print("[App] Admin privileges detected - applying all blocking...")
                 blocker.sync_with_hosts_file()
                 
                 # Force apply adult content and casino/gambling blocking
@@ -476,7 +462,7 @@ class App:
             self.page.update()
             print("Main page displayed successfully")
         except Exception as e:
-            print(f"Error showing main page: {e}")
+            pass
             import traceback
             traceback.print_exc()
             # Show error message
@@ -491,47 +477,15 @@ class App:
     def _show_custom_domains_page(self) -> None:
         """Show custom domains page."""
         try:
-            print("[App] Starting _show_custom_domains_page()...")
-            print("[App] Creating CustomDomainPage instance...")
             custom_page = CustomDomainPage(self.page)
-            print("[App] CustomDomainPage instance created")
-            
             self.current_page = "custom_domains"
-            print(f"[App] Current page set to: {self.current_page}")
-            
-            print("[App] Calling create_page()...")
             custom_container = custom_page.create_page()
-            print(f"[App] Container created: {type(custom_container)}")
             
-            print("[App] Clearing page controls...")
             self.page.controls.clear()
-            print("[App] Page controls cleared")
-            
-            print("[App] Adding custom container to page...")
             self.page.add(custom_container)
-            print("[App] Container added to page") 
-            
-            print("[App] Updating page...")
             self.page.update()
-            print("[App] Page updated successfully")
-            
-            # Force refresh of domain list after page is displayed to ensure it renders
-            print("[App] Triggering domain list refresh after page display...")
-            try:
-                if hasattr(custom_page, '_refresh_domain_list'):
-                    custom_page._refresh_domain_list()
-                    print("[App] Domain list refreshed after page display")
-                    self.page.update()
-                    print("[App] Page updated again after domain list refresh")
-            except Exception as refresh_err:
-                print(f"[App] Note: Could not refresh domain list after display: {refresh_err}")
-            
-            print("[App] Custom domains page displayed successfully")
-            
-        except Exception as e:
-            print(f"[App] ERROR showing custom domains page: {e}")
-            import traceback
-            traceback.print_exc()
+        except Exception:
+            pass
             # Show error message
             try:
                 self.page.snack_bar = ft.SnackBar(
@@ -688,15 +642,7 @@ def check_and_request_admin() -> bool:
 async def main(page: ft.Page):
     """Main entry point for Flet app."""
     try:
-        # Admin check already happened before Flet started (in __main__ block)
-        # Just verify we have admin privileges
-        import platform
-        import ctypes
-        if platform.system() == "Windows":
-            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
-            if not is_admin:
-                # This shouldn't happen if check_and_request_admin worked correctly
-                print("WARNING: App is running without admin privileges!")
+        # Admin check already happened before Flet started
         
         # Check if app should start minimized (for auto-start)
         # Check command line arguments or environment variable
@@ -716,14 +662,11 @@ async def main(page: ft.Page):
         if not start_minimized:
             page.window.visible = True
             page.update()
-            print("App started - window visible")
         else:
             page.window.visible = False
             page.update()
-            print("App started - running in system tray (minimized)")
         
     except Exception as e:
-        print(f"Fatal error initializing app: {e}")
         import traceback
         traceback.print_exc()
         # Try to show error on page
@@ -751,26 +694,46 @@ async def main(page: ft.Page):
 
 
 def setup_system_tray(app_instance):
-    """Setup system tray icon."""
+    """Setup system tray icon with proper show/quit functionality."""
     def show_window():
-        # Show window
-        app_instance.page.window.visible = True
-        app_instance.page.update()
+        """Show the application window."""
+        try:
+            if app_instance.page:
+                app_instance.page.window.visible = True
+                app_instance.page.window.minimized = False
+                app_instance.page.window.always_on_top = False
+                app_instance.page.update()
+        except Exception:
+            pass
 
     def quit_app():
-        # App cannot be quit - just hide window (keeps running in background)
-        app_instance.page.window.visible = False
-        app_instance.page.update()
-        # Optionally show notification that app is still running
+        """Quit the application by stopping tray icon and closing window."""
+        import sys
+        import os
+        
         try:
-            app_instance.page.snack_bar = ft.SnackBar(
-                content=ft.Text("App is still running in background. Right-click tray icon to show."),
-                duration=3000,
-            )
-            app_instance.page.snack_bar.open = True
-            app_instance.page.update()
-        except:
-            pass
+            # Stop the tray icon first (this will stop the tray thread)
+            if app_instance.tray_icon:
+                try:
+                    app_instance.tray_icon.stop()
+                    # Give it a moment to stop
+                    import time
+                    time.sleep(0.1)
+                except Exception:
+                    pass
+            
+            # Close the window
+            try:
+                if app_instance.page:
+                    app_instance.page.window.close()
+            except Exception:
+                pass
+            
+            # Force exit to ensure clean shutdown
+            os._exit(0)
+        except Exception:
+            # Fallback: force exit
+            os._exit(0)
 
     # Ensure system_integration is available
     try:
@@ -788,20 +751,46 @@ def setup_system_tray(app_instance):
     icon_path = Path(__file__).parent / "assets" / "icon.ico"
     
     try:
-        system_integration.create_system_tray(
+        tray_icon = system_integration.create_system_tray(
             icon_path=str(icon_path) if icon_path.exists() else None,
             show_callback=show_window,
             quit_callback=quit_app,
             menu_title="DeepFocus",
         )
-    except Exception as e:
-        print(f"Error setting up system tray: {e}")
+        # Store reference to tray icon so we can stop it on quit
+        if tray_icon:
+            app_instance.tray_icon = tray_icon
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
+    # CRITICAL: Prevent multiple instances BEFORE anything else
+    import platform
+    if platform.system() == "Windows":
+        try:
+            import win32event
+            import win32api
+            from winerror import ERROR_ALREADY_EXISTS
+            
+            # Create a unique mutex name for this application
+            mutex_name = "Global\\DeepFocus_SingleInstance_Mutex"
+            
+            # Attempt to create the mutex (Global namespace ensures system-wide check)
+            mutex = win32event.CreateMutex(None, False, mutex_name)
+            last_error = win32api.GetLastError()
+            
+            if last_error == ERROR_ALREADY_EXISTS:
+                # Another instance is already running - exit immediately without starting Flet
+                import os
+                os._exit(1)  # Force immediate exit
+        except ImportError:
+            pass  # pywin32 not available - skip mutex check
+        except Exception:
+            pass  # Silent fail
+    
     # CRITICAL: Check and request admin privileges BEFORE starting Flet
     # This ensures the app always runs with admin privileges
-    import platform
     if platform.system() == "Windows":
         # Check if already running as admin
         try:
@@ -810,73 +799,25 @@ if __name__ == "__main__":
             
             if not is_admin:
                 # Not running as admin - restart with elevation
-                print("=" * 70)
-                print("REQUESTING ADMINISTRATOR PRIVILEGES...")
-                print("=" * 70)
-                print("This application REQUIRES administrator privileges to function.")
-                print("Please click 'Yes' on the UAC prompt to continue.")
-                print("=" * 70)
-                
                 # Only auto-restart if running as EXE (frozen)
                 if getattr(sys, 'frozen', False):
                     try:
-                        # Get the executable path
                         exe_path = sys.executable
-                        
-                        # Get command line arguments (preserve all args including --minimized)
                         args = sys.argv[1:] if len(sys.argv) > 1 else []
                         args_str = " ".join(f'"{arg}"' if " " in arg else arg for arg in args)
                         
-                        # Request admin elevation using ShellExecuteW with "runas" verb
-                        # This will show UAC prompt to the user
+                        # Request admin elevation - this shows UAC prompt
                         result = ctypes.windll.shell32.ShellExecuteW(
-                            None,                    # hwnd (parent window)
-                            "runas",                 # Operation: request admin elevation
-                            exe_path,                # File to execute
-                            args_str,                # Command line arguments
-                            None,                    # Working directory (use current)
-                            1                        # nShowCmd: SW_SHOWNORMAL (show window normally)
+                            None, "runas", exe_path, args_str, None, 1
                         )
                         
-                        # ShellExecuteW returns a value > 32 if successful
                         if result > 32:
-                            print("✓ Restarting application with administrator privileges...")
-                            print("Please wait for the UAC prompt and click 'Yes'.")
-                            # Exit current instance - the elevated instance will start
+                            # Success - exit current instance
                             sys.exit(0)
-                        else:
-                            # User likely declined UAC prompt or error occurred
-                            error_codes = {
-                                0: "Out of memory or resources",
-                                2: "File not found",
-                                3: "Path not found",
-                                5: "Access denied (user declined UAC prompt)",
-                                8: "Out of memory",
-                                11: "Invalid .exe file",
-                                26: "Sharing violation",
-                                27: "File association incomplete or invalid",
-                                28: "DDE transaction timed out",
-                                29: "DDE transaction failed",
-                                30: "DDE transaction busy",
-                                31: "No file association",
-                                32: "DLL not found"
-                            }
-                            error_msg = error_codes.get(result, f"Unknown error (code: {result})")
-                            print(f"✗ Failed to restart with admin privileges: {error_msg}")
-                            print("The application will continue, but blocking features may not work.")
-                            print("Please manually run as Administrator for full functionality.")
-                    except Exception as e:
-                        print(f"✗ Error requesting administrator privileges: {e}")
-                        print("The application will continue, but blocking features may not work.")
-                else:
-                    # Running as script - can't automatically elevate
-                    print("WARNING: Running as Python script - cannot auto-elevate.")
-                    print("Please run the script with administrator privileges manually.")
-                    print("Example: Right-click command prompt -> Run as administrator")
-            else:
-                print("✓ Running with Administrator privileges")
-        except Exception as e:
-            print(f"Error checking admin privileges: {e}")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
     
     # Always enable auto-start - app should always run
     # Ensure settings and system_integration are available
@@ -897,13 +838,13 @@ if __name__ == "__main__":
                 from app.config.settings import settings
                 from app.utils.system_integration import system_integration
     
-    # Now use them safely
+    # Enable auto-start silently
     try:
         app_path = system_integration.get_app_path()
         system_integration.set_auto_start(True, app_path)
         settings.set_auto_start(True)
-    except Exception as e:
-        print(f"Warning: Could not set auto-start: {e}")
+    except Exception:
+        pass
     
     # Run the Flet app
     # Note: When using 'flet run -m src.main', Flet CLI calls ft.run() automatically
