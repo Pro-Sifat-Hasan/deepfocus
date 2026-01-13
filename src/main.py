@@ -210,20 +210,52 @@ class App:
         self.page.window.resizable = True    
          
         # Prevent window from closing - app always runs  
-        self.page.window.prevent_close = True   
+        self.page.window.prevent_close = True
+        
+        # Setup system tray FIRST before window event handler
+        # This ensures tray icon is available when close button is clicked
+        try:
+            setup_system_tray(self)
+            print("System tray icon created - app will minimize to tray when closed")
+        except Exception as e:
+            print(f"Warning: Could not set up system tray: {e}")
            
         # Handle window close event - minimize to tray instead of closing
         def on_window_event(e):
-            if hasattr(e, 'data') and e.data == "close":
-                # Hide window instead of closing - app keeps running in tray
-                self.page.window.visible = False
-                self.page.update()
-                print("Window hidden - app running in system tray")
+            # Handle window close button click
+            try:
+                # Check for close event in multiple ways for compatibility
+                is_close_event = (
+                    (hasattr(e, 'data') and e.data == "close") or
+                    (hasattr(e, 'event_type') and e.event_type == "close") or
+                    str(e).lower().find("close") != -1
+                )
+                
+                if is_close_event:
+                    # Hide window instead of closing - app keeps running in tray
+                    self.page.window.visible = False
+                    self.page.window.always_on_top = False
+                    self.page.update()
+                    print("Window hidden - app running in system tray (close button clicked)")
+                    # Ensure system tray is still available
+                    try:
+                        setup_system_tray(self)
+                    except:
+                        pass
+            except Exception as ex:
+                print(f"Error in window close handler: {ex}")
         
+        # Set up window event handler properly
         try:
             self.page.window.on_event = on_window_event
-        except:
-            pass  # Fallback if event handler not available
+            print("Window close event handler set up successfully")
+        except AttributeError:
+            # Alternative approach if on_event not available
+            try:
+                self.page.on_window_event = on_window_event
+                print("Window close event handler set up (alternative method)")
+            except Exception as ex:
+                print(f"Warning: Could not set window close event handler: {ex}")
         
         # Store reference to app instance for tray callbacks
         self.app_instance = self
@@ -293,12 +325,12 @@ class App:
                 # Protect hosts file
                 protection_monitor.protect_hosts_file()
                 
-                # Setup system tray for background operation
+                # System tray is already set up in __init__ (before window events)
+                # Just ensure it's running
                 try:
                     setup_system_tray(self)
-                    print("System tray icon created - app will minimize to tray when closed")
                 except Exception as e:
-                    print(f"Error setting up system tray: {e}")
+                    print(f"Warning: Could not verify system tray: {e}")
         except Exception as e:
             print(f"Error checking admin privileges: {e}")
         
@@ -556,12 +588,118 @@ class App:
     
 
 
+def check_and_request_admin() -> bool:
+    """Check if running as admin, and automatically restart with admin if needed.
+    
+    This function will automatically restart the application with administrator
+    privileges if it's not already running as admin. This ensures the app
+    ALWAYS runs with the necessary privileges.
+    
+    Returns:
+        True if running as admin or if restart was initiated, False otherwise
+    """
+    import platform
+    import ctypes
+    
+    if platform.system() != "Windows":
+        return True  # Not Windows, no admin needed
+    
+    try:
+        # Check if already admin
+        is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+        
+        if is_admin:
+            print("✓ Running with Administrator privileges")
+            return True
+        
+        # Not running as admin - need to restart with elevation
+        print("=" * 70)
+        print("REQUESTING ADMINISTRATOR PRIVILEGES...")
+        print("=" * 70)
+        print("This application REQUIRES administrator privileges to function.")
+        print("Please click 'Yes' on the UAC prompt to continue.")
+        print("=" * 70)
+        
+        # Only auto-restart if running as EXE (frozen)
+        if getattr(sys, 'frozen', False):
+            try:
+                # Get the executable path
+                exe_path = sys.executable
+                
+                # Get command line arguments (preserve all args including --minimized)
+                args = sys.argv[1:] if len(sys.argv) > 1 else []
+                args_str = " ".join(f'"{arg}"' if " " in arg else arg for arg in args)
+                
+                # Request admin elevation using ShellExecuteW with "runas" verb
+                # This will show UAC prompt to the user
+                result = ctypes.windll.shell32.ShellExecuteW(
+                    None,                    # hwnd (parent window)
+                    "runas",                 # Operation: request admin elevation
+                    exe_path,                # File to execute
+                    args_str,                # Command line arguments
+                    None,                    # Working directory (use current)
+                    1                        # nShowCmd: SW_SHOWNORMAL (show window normally)
+                )
+                
+                # ShellExecuteW returns a value > 32 if successful
+                if result > 32:
+                    print("✓ Restarting application with administrator privileges...")
+                    print("Please wait for the UAC prompt and click 'Yes'.")
+                    # Exit current instance - the elevated instance will start
+                    sys.exit(0)
+                else:
+                    # User likely declined UAC prompt or error occurred
+                    error_codes = {
+                        0: "Out of memory or resources",
+                        2: "File not found",
+                        3: "Path not found",
+                        5: "Access denied (user declined UAC)",
+                        8: "Out of memory",
+                        11: "Invalid .exe file",
+                        26: "Sharing violation",
+                        27: "File association incomplete or invalid",
+                        28: "DDE transaction timed out",
+                        29: "DDE transaction failed",
+                        30: "DDE transaction busy",
+                        31: "No file association",
+                        32: "DLL not found"
+                    }
+                    error_msg = error_codes.get(result, f"Unknown error (code: {result})")
+                    print(f"✗ Failed to restart with admin privileges: {error_msg}")
+                    print("Please manually run the application as Administrator.")
+                    return False
+                    
+            except Exception as e:
+                print(f"✗ Error requesting administrator privileges: {e}")
+                print("Please manually run the application as Administrator.")
+                return False
+        else:
+            # Running as script - can't automatically elevate
+            print("WARNING: Running as Python script - cannot auto-elevate.")
+            print("Please run the script with administrator privileges manually.")
+            print("Example: Right-click command prompt -> Run as administrator")
+            return False
+            
+    except Exception as e:
+        print(f"Error checking admin privileges: {e}")
+        return False
+
+
 async def main(page: ft.Page):
     """Main entry point for Flet app."""
     try:
+        # Admin check already happened before Flet started (in __main__ block)
+        # Just verify we have admin privileges
+        import platform
+        import ctypes
+        if platform.system() == "Windows":
+            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+            if not is_admin:
+                # This shouldn't happen if check_and_request_admin worked correctly
+                print("WARNING: App is running without admin privileges!")
+        
         # Check if app should start minimized (for auto-start)
         # Check command line arguments or environment variable
-        import sys
         start_minimized = "--minimized" in sys.argv or os.getenv("DEEPFOCUS_MINIMIZED", "").lower() == "true"
         
         # Initialize app (content will be added)
@@ -661,6 +799,85 @@ def setup_system_tray(app_instance):
 
 
 if __name__ == "__main__":
+    # CRITICAL: Check and request admin privileges BEFORE starting Flet
+    # This ensures the app always runs with admin privileges
+    import platform
+    if platform.system() == "Windows":
+        # Check if already running as admin
+        try:
+            import ctypes
+            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+            
+            if not is_admin:
+                # Not running as admin - restart with elevation
+                print("=" * 70)
+                print("REQUESTING ADMINISTRATOR PRIVILEGES...")
+                print("=" * 70)
+                print("This application REQUIRES administrator privileges to function.")
+                print("Please click 'Yes' on the UAC prompt to continue.")
+                print("=" * 70)
+                
+                # Only auto-restart if running as EXE (frozen)
+                if getattr(sys, 'frozen', False):
+                    try:
+                        # Get the executable path
+                        exe_path = sys.executable
+                        
+                        # Get command line arguments (preserve all args including --minimized)
+                        args = sys.argv[1:] if len(sys.argv) > 1 else []
+                        args_str = " ".join(f'"{arg}"' if " " in arg else arg for arg in args)
+                        
+                        # Request admin elevation using ShellExecuteW with "runas" verb
+                        # This will show UAC prompt to the user
+                        result = ctypes.windll.shell32.ShellExecuteW(
+                            None,                    # hwnd (parent window)
+                            "runas",                 # Operation: request admin elevation
+                            exe_path,                # File to execute
+                            args_str,                # Command line arguments
+                            None,                    # Working directory (use current)
+                            1                        # nShowCmd: SW_SHOWNORMAL (show window normally)
+                        )
+                        
+                        # ShellExecuteW returns a value > 32 if successful
+                        if result > 32:
+                            print("✓ Restarting application with administrator privileges...")
+                            print("Please wait for the UAC prompt and click 'Yes'.")
+                            # Exit current instance - the elevated instance will start
+                            sys.exit(0)
+                        else:
+                            # User likely declined UAC prompt or error occurred
+                            error_codes = {
+                                0: "Out of memory or resources",
+                                2: "File not found",
+                                3: "Path not found",
+                                5: "Access denied (user declined UAC prompt)",
+                                8: "Out of memory",
+                                11: "Invalid .exe file",
+                                26: "Sharing violation",
+                                27: "File association incomplete or invalid",
+                                28: "DDE transaction timed out",
+                                29: "DDE transaction failed",
+                                30: "DDE transaction busy",
+                                31: "No file association",
+                                32: "DLL not found"
+                            }
+                            error_msg = error_codes.get(result, f"Unknown error (code: {result})")
+                            print(f"✗ Failed to restart with admin privileges: {error_msg}")
+                            print("The application will continue, but blocking features may not work.")
+                            print("Please manually run as Administrator for full functionality.")
+                    except Exception as e:
+                        print(f"✗ Error requesting administrator privileges: {e}")
+                        print("The application will continue, but blocking features may not work.")
+                else:
+                    # Running as script - can't automatically elevate
+                    print("WARNING: Running as Python script - cannot auto-elevate.")
+                    print("Please run the script with administrator privileges manually.")
+                    print("Example: Right-click command prompt -> Run as administrator")
+            else:
+                print("✓ Running with Administrator privileges")
+        except Exception as e:
+            print(f"Error checking admin privileges: {e}")
+    
     # Always enable auto-start - app should always run
     # Ensure settings and system_integration are available
     try:

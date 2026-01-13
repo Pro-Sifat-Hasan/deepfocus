@@ -20,7 +20,7 @@ htmlcov/
 
 # Build artifacts
 build/
-dist/
+# dist/
 *.egg-info/
 .flet/
 

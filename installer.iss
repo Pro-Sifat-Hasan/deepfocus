@@ -51,7 +51,10 @@ Name: "{group}\{cm:UninstallProgram,DeepFocus}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\DeepFocus"; Filename: "{app}\deepfocus.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\deepfocus.exe"; Description: "{cm:LaunchProgram,DeepFocus}"; Flags: nowait postinstall skipifsilent; Verb: runas
+; Launch program after installation with admin privileges
+; Use runascurrentuser to run as the installing user (not admin context)
+; The EXE itself has a manifest that requests admin privileges when needed
+Filename: "{app}\deepfocus.exe"; Description: "{cm:LaunchProgram,DeepFocus}"; Flags: nowait postinstall skipifsilent runascurrentuser
 
 [Registry]
 ; Add to startup if task is selected - start minimized (in tray)

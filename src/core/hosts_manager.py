@@ -43,17 +43,33 @@ class HostsManager:
                 pass  # Silent fail for performance
 
     def is_admin(self) -> bool:
-        """Check if running with administrator privileges."""
+        """Check if running with administrator privileges.
+        Uses multiple methods to ensure accurate detection.
+        """
         if platform.system() != "Windows":
             return False
         
         try:
-            # Try to write to hosts file location to check permissions
-            test_file = self.hosts_path.parent / "test_write_access.tmp"
-            test_file.write_text("test")
-            test_file.unlink()
-            return True
-        except (PermissionError, IOError):
+            import ctypes
+            
+            # Method 1: Check using shell32.IsUserAnAdmin()
+            try:
+                is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+                if is_admin:
+                    return True
+            except:
+                pass
+            
+            # Method 2: Try to write to a protected location (hosts file directory)
+            try:
+                test_file = self.hosts_path.parent / "test_write_access.tmp"
+                test_file.write_text("test")
+                test_file.unlink()
+                return True
+            except (PermissionError, IOError, OSError):
+                return False
+                
+        except Exception:
             return False
 
     def backup_hosts(self, force: bool = False) -> bool:
@@ -72,14 +88,14 @@ class HostsManager:
             
             # Skip backup if not forced and:
             # 1. File size hasn't changed
-            # 2. Last backup was less than 5 minutes ago
+            # 2. Last backup was less than 1 hour ago (optimized to reduce disk usage)
             if not force and self.last_backup_time and self.last_backup_size:
                 time_diff = (current_time - self.last_backup_time).total_seconds()
-                if self.last_backup_size == current_size and time_diff < 300:  # 5 minutes
+                if self.last_backup_size == current_size and time_diff < 3600:  # 1 hour
                     return True  # Skip backup - no significant change
             
-            # Clean old backups first (keep only last 10)
-            self._cleanup_old_backups(max_backups=10)
+            # Clean old backups first (keep only last 3 to save disk space)
+            self._cleanup_old_backups(max_backups=3)
             
             timestamp = current_time.strftime("%Y%m%d_%H%M%S")
             backup_file = self.backup_dir / f"hosts_backup_{timestamp}.txt"
@@ -100,7 +116,7 @@ class HostsManager:
                 print(f"Error backing up hosts file: {e}")
             return False
     
-    def _cleanup_old_backups(self, max_backups: int = 10) -> None:
+    def _cleanup_old_backups(self, max_backups: int = 3) -> None:
         """Clean up old backup files, keeping only the most recent N backups.
         
         Args:

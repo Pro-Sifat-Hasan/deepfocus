@@ -18,7 +18,7 @@ class ProtectionMonitor:
         self.hosts_manager = HostsManager()
         self.running = False
         self.monitor_thread = None
-        self.check_interval = 30  # Check every 30 seconds
+        self.check_interval = 60  # Check every 60 seconds (optimized for CPU usage)
         self.last_hosts_content = None
         
     def start(self) -> None:
@@ -33,7 +33,7 @@ class ProtectionMonitor:
         self.running = True
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
-        print("Protection monitor: Started (checking every 30 seconds)")
+        print(f"Protection monitor: Started (checking every {self.check_interval} seconds)")
     
     def stop(self) -> None:
         """Stop the protection monitor."""
@@ -57,10 +57,14 @@ class ProtectionMonitor:
                 time.sleep(self.check_interval)
     
     def _check_and_reapply_blocks(self) -> None:
-        """Check hosts file and re-apply blocks if needed, but respect unblocked platforms."""
+        """Check hosts file and re-apply blocks if needed, but respect unblocked platforms.
+        Optimized for memory and CPU usage - only checks what's necessary."""
         try:
-            # Get current blocked domains from hosts file
+            # Get current blocked domains from hosts file (cache result)
             current_blocked = self.hosts_manager.get_blocked_domains()
+            
+            # Track if any changes were made to avoid unnecessary DNS flush
+            changes_made = False
             
             # Check platforms - only re-apply if settings say they should be blocked
             for platform, domains in PLATFORM_DOMAINS.items():
@@ -70,9 +74,16 @@ class ProtectionMonitor:
                     if missing_domains:
                         print(f"Protection monitor: {platform} domains removed! Re-applying blocks...")
                         try:
-                            # Force re-block the missing domains
-                            for domain in missing_domains:
-                                self.hosts_manager.block_domain(domain, force=True)
+                            # Use batch blocking for better performance
+                            if len(missing_domains) == len(domains):
+                                # All domains missing - use platform blocking method
+                                from .blocker import Blocker
+                                blocker = Blocker()
+                                blocker.block_platform(platform, force=True)
+                            else:
+                                # Some domains missing - block individually but in batch
+                                self.hosts_manager.block_domains(missing_domains)
+                            changes_made = True
                             print(f"Protection monitor: Re-applied blocks for {platform}")
                         except Exception as e:
                             print(f"Protection monitor: Failed to re-apply {platform}: {e}")
@@ -80,22 +91,23 @@ class ProtectionMonitor:
                     # Platform should be unblocked - ensure it stays unblocked
                     blocked_domains_for_platform = [d for d in domains if d in current_blocked]
                     if blocked_domains_for_platform:
-                        print(f"Protection monitor: {platform} should be unblocked but domains found in hosts file. Unblocking...")
+                        print(f"Protection monitor: {platform} should be unblocked but domains found. Unblocking...")
                         try:
                             self.hosts_manager.unblock_domains(blocked_domains_for_platform)
+                            changes_made = True
                             print(f"Protection monitor: Unblocked {platform}")
-                            self.hosts_manager._flush_dns_cache()
                         except Exception as e:
                             print(f"Protection monitor: Failed to unblock {platform}: {e}")
             
-            # Check adult content
+            # Check adult content (only if enabled to save CPU)
             if settings.is_adult_content_blocked():
                 missing_adult = [d for d in ADULT_CONTENT_DOMAINS if d not in current_blocked]
                 if missing_adult:
                     print(f"Protection monitor: Adult content domains removed! Re-applying blocks...")
                     try:
-                        for domain in missing_adult[:5]:  # Re-apply first 5 to avoid spam
-                            self.hosts_manager.block_domain(domain, force=True)
+                        # Use batch blocking for better performance
+                        self.hosts_manager.block_domains(missing_adult)
+                        changes_made = True
                         print("Protection monitor: Re-applied adult content blocks")
                     except Exception as e:
                         print(f"Protection monitor: Failed to re-apply adult content: {e}")
@@ -105,10 +117,15 @@ class ProtectionMonitor:
                 if blocked_adult:
                     print(f"Protection monitor: Adult content should be unblocked but domains found. Unblocking...")
                     try:
-                        self.hosts_manager.unblock_domains(blocked_adult[:10])  # Unblock in batches
-                        self.hosts_manager._flush_dns_cache()
+                        # Unblock in batches for better performance
+                        self.hosts_manager.unblock_domains(blocked_adult)
+                        changes_made = True
                     except Exception as e:
                         print(f"Protection monitor: Failed to unblock adult content: {e}")
+            
+            # Only flush DNS cache if changes were actually made (optimization)
+            if changes_made:
+                self.hosts_manager._flush_dns_cache()
                         
         except Exception as e:
             print(f"Protection monitor: Error checking blocks: {e}")
